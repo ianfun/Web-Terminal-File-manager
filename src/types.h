@@ -10,11 +10,6 @@ namespace Websocket {
 	};
 }
 
-#ifdef __GNUC__
-#define CONSTEVAL
-#else
-#define CONSTEVAL consteval
-#endif
 template <ULONG N>
 CONSTEVAL ULONG cstrlen(const char(&)[N]) {
 	return N - 1;
