@@ -35,29 +35,34 @@ void onRecvData(IOCP* ctx) {
 		case Websocket::Text:
 		case Websocket::Binary:
 		{
-			DWORD written = 0;
-			if (WriteFile(ctx->hStdIn, payload, (DWORD)ctx->payload_len, &written, 0) == FALSE) {
-				assert(0);
+			if (payload[0] == 0 && ctx->payload_len==5) {
+				COORD c;
+				c.Y = *(PSHORT) & payload[1];
+				c.X = *(PSHORT)&payload[3];
+				ResizePseudoConsole(ctx->hPC, c);
+				printf("ResizePseudoConsole: X=%d, Y=%d\n", c.X, c.Y);
+			}
+			else {
+				DWORD written = 0;
+				if (WriteFile(ctx->hStdIn, payload, (DWORD)ctx->payload_len, &written, 0) == FALSE) {
+					assert(0);
+				}
 			}
 		}break;
+
 		case Websocket::Close:
 		{
+			if (ctx->is_close_frame_sent) {
+				CloseClient(ctx);
+				return;
+			}
 			if (ctx->waitHandle) {
-
 				BOOL b = UnregisterWait(ctx->waitHandle);
-
 				// !important: UnregisterWait is necessary to prevent *heap is broken exception* in ClosePseudoConsole(ctx->hPC)
 				assert(b);
 				ctx->waitHandle = NULL;
 			}
 			_ASSERT(_CrtCheckMemory());
-#ifdef _DEBUG
-			if (ctx->payload_len >= 2) {
-				WORD code = ntohs(*(PWORD)payload);
-				log_fmt("Websocket: closed frame: (code: %u, reason: %.*s)\n", code, (int)(ctx->payload_len - 2), payload + 2);
-				websocketWrite(ctx, (const char*)payload, (ULONG)ctx->payload_len, &ctx->sendOL, ctx->sendBuf, Websocket::Close);
-			}
-#endif
 			if (ctx->hReadThread) {
 				if (CancelSynchronousIo(ctx->hReadThread) == FALSE) {
 					assert(0);
@@ -90,7 +95,24 @@ void onRecvData(IOCP* ctx) {
 				free(ctx->addrlist);
 				ctx->addrlist = NULL;
 			}
-		}return;
+			/*
+			* write the close frame
+			*/
+			if (ctx->payload_len >= 2) {
+				WORD code = ntohs(*(PWORD)payload);
+				log_fmt("Websocket: closed frame: (code: %u, reason: %.*s)\n", code, (int)(ctx->payload_len - 2), payload + 2);
+				websocketWrite(ctx, (const char*)payload, (ULONG)ctx->payload_len, &ctx->sendOL, ctx->sendBuf, Websocket::Close);
+			}
+			else {
+				/* no error code */
+				*(unsigned short*)ctx->buf = htons(1000);
+				memcpy(&ctx->buf[2], "no close code", 13);
+				websocketWrite(ctx, ctx->buf, 2, &ctx->sendOL, ctx->sendBuf, Websocket::Close);
+			}
+			ctx->state = State::AfterSendHTML;
+			return;
+
+		}
 		default: {
 			CloseClient(ctx);
 		}return;

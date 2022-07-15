@@ -1,33 +1,5 @@
-#ifdef __GNUC__
-/*
- * compile with gcc plus g++
- * $ cd src
- * $ gcc -c llhttp\*.c
- * $ g++ .\main.cpp *.o  -lws2_32 -lcrypt32 -lbcrypt -lwininet -lShlwapi -lIPHLPAPI -o server.exe
- */
-#define _WIN32_WINNT 999999999999999
-#define WIN32_WINNT 999999999999999
-#define UNICODE
-#define _UNICODE
-#define TCP_KEEPIDLE 3
-#define URL_UNESCAPE_AS_UTF8 0x40000
-#define DEBUG
-#define _DEBUG
-typedef unsigned long long u64;
-u64 ntohll(u64 value){
-	return 
-	(u64)(*(unsigned char*)&value << 24) |  
-	(u64)(*(unsigned char*)&value << 16) | 
-	(u64)(*(unsigned char*)&value << 8) | 
-	(u64)(*(unsigned char*)&value);
-}
-#define CONSTEVAL
-#else
-#define CONSTEVAL consteval
-#endif
 #define _CRT_SECURE_NO_WARNINGS // sprintf
 #define N_THREADS 1
-
 #include <winsock2.h>
 #include <Ws2tcpip.h>
 #include <mstcpip.h>
@@ -40,7 +12,7 @@ u64 ntohll(u64 value){
 #include <string>
 #include <shlwapi.h>
 #include "NtAPI.h"
-#include "llhttp/llhttp.h"
+#include "llhttp.h"
 #include "types.h"
 #pragma comment(lib, "ws2_32")
 #pragma comment(lib, "mswsock") 
@@ -50,6 +22,7 @@ u64 ntohll(u64 value){
 static CHAR* computer_name;
 static SIZE_T computer_name_len;
 static LPFN_ACCEPTEX pAcceptEx;
+static LPFN_DISCONNECTEX pDisconnectEx;
 static HANDLE heap, iocp;
 static HMODULE ntdll;
 static OVERLAPPED dumyOL = { 0 };
@@ -58,6 +31,7 @@ struct IOCP;
 #if N_THREADS > 1
 static HANDLE hThs[N_THREADS-1];
 #endif
+
 #ifdef _DEBUG
 #define log_puts(x) puts(x)
 #define log_fmt printf
@@ -103,15 +77,8 @@ BOOL WINAPI ConsoleHandler(DWORD event)
 #pragma warning(disable: 6308)
 #pragma warning(disable: 28182)
 
-#ifdef __GNUC__
-int main(void)
-#else
 int wmain(void)
-#endif
 {
-	if (SetCurrentDirectoryW(L"../static")==FALSE){
-		return -1;
-	}
 	heap = GetProcessHeap();
 	if (heap == NULL) {
 		fatal("GetProcessHeap");
@@ -229,12 +196,15 @@ int wmain(void)
 	}
 	{
 		DWORD dwBytes = 0;
-		GUID GuidAcceptEx = WSAID_ACCEPTEX;
+		GUID ga = WSAID_ACCEPTEX, gd = WSAID_DISCONNECTEX;
 		if (WSAIoctl(acceptIOCP.server, SIO_GET_EXTENSION_FUNCTION_POINTER,
-			&GuidAcceptEx, sizeof(GuidAcceptEx),
+			&ga, sizeof(ga),
 			&pAcceptEx, sizeof(pAcceptEx),
-			&dwBytes, NULL, NULL) == SOCKET_ERROR) {
-			return 1;
+			&dwBytes, NULL, NULL) == SOCKET_ERROR || WSAIoctl(acceptIOCP.server, SIO_GET_EXTENSION_FUNCTION_POINTER,
+				&gd, sizeof(gd),
+				&pDisconnectEx, sizeof(pDisconnectEx),
+				&dwBytes, NULL, NULL)) {
+			fatal("WSAIoctl: get AcceptEx & DisconnectEx function pointer");
 		}
 	}
 	if (CreateIoCompletionPort((HANDLE)acceptIOCP.server, iocp, (ULONG_PTR)pAcceptEx, N_THREADS) == NULL) {

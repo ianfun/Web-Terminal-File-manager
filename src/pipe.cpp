@@ -11,6 +11,7 @@ VOID NTAPI onProcessExit(PVOID context, BOOLEAN timeout) {
 		CloseHandle(ctx->hReadThread);
 		ctx->hReadThread = NULL;
 	}
+	int n = -1;
 	if (ctx->hProcess) {
 		DWORD dwExitCode;
 		const char* msg;
@@ -20,8 +21,7 @@ VOID NTAPI onProcessExit(PVOID context, BOOLEAN timeout) {
 		else {
 			msg = "process was exited(failed to get exit code)";
 		}
-		int n = snprintf(ctx->buf + 2, sizeof(ctx->buf) - 2, msg, dwExitCode);
-		websocketWrite(ctx, ctx->buf, n + 2, &ctx->sendOL, ctx->sendBuf, Websocket::Opcode::Close);
+		n = snprintf(ctx->buf + 2, sizeof(ctx->buf) - 2, msg, dwExitCode);
 		if (CloseHandle(ctx->hProcess) == FALSE) {
 			assert(0);
 		}ctx->hProcess = NULL;
@@ -46,6 +46,10 @@ VOID NTAPI onProcessExit(PVOID context, BOOLEAN timeout) {
 		DeleteProcThreadAttributeList(ctx->addrlist);
 		free(ctx->addrlist);
 		ctx->addrlist = NULL;
+	}
+	if (n > 0) {
+		ctx->is_close_frame_sent = true;
+		websocketWrite(ctx, ctx->buf, n + 2, &ctx->sendOL, ctx->sendBuf, Websocket::Opcode::Close);
 	}
 }
 
@@ -83,7 +87,7 @@ BOOL spawn(WCHAR* cmd, IOCP* ctx) {
 							FALSE,
 							EXTENDED_STARTUPINFO_PRESENT,
 							NULL,
-							NULL,
+							ctx->dir,
 							&st.StartupInfo,
 							&proc)) {
 							ctx->hReadThread = CreateThread(NULL, 0, readLoop, ctx, 0, 0);

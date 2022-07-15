@@ -1,0 +1,71 @@
+﻿<!DOCTYPE html>
+
+<html lang="en" xmlns="http://www.w3.org/1999/xhtml">
+<head>
+    <meta charset="utf-8" />
+    <title>Settings</title>
+    <script>
+        const settings_path = "/settings.json";
+        var settings;
+        var settingsstr;
+        var unsave = false;
+        fetch(settings_path).then(res => res.json().then(j => {
+            settings = j;
+            var term_list = document.getElementById("termainl-list-ul");
+            try {
+                for (t of settings.profiles.list) {
+                    var u = document.createElement('li');
+                    u.innerText = t.name;
+                    term_list.appendChild(u);
+                }
+            } catch (e) {
+                console.log(e);
+            }
+            settingsstr = JSON.stringify(settings);
+            document.getElementById("json-edit-textarea").innerText = settingsstr;
+        })).catch(e => alert("cannot fetch settings.json:\n" + e))
+        function save() {
+            settingsstr = document.getElementById("json-edit-textarea").value;
+            var xhr = new XMLHttpRequest();
+            xhr.open("POST", settings_path);
+            xhr.onreadystatechange = function () {
+                if (xhr.readyState === XMLHttpRequest.DONE && xhr.status === 204) {
+                    alert("Saved!");
+                    unsave = false;
+                }
+            }
+            xhr.onerror = function () {
+                alert("failed to save settings\nplease try again later");
+            }
+            //xhr.setRequestHeader("Content-Type", "applicatin/json");
+            xhr.send(settingsstr);
+
+        }
+        window.onbeforeunload = function () {
+            return unsave;
+        }
+        window.onload = function () {
+            document.getElementById("json-edit-textarea").addEventListener("input", function () {
+                unsave = true;
+            })
+        }
+    </script>
+</head>
+<body>
+    <h1>Settings</h1>
+    <button style="position: fixed;top: 1em;right: 1em;font-size: 2em;" onclick="save()">Save</button>
+    <div id="terminal-list">
+        <h2>Terminals</h2>
+        <ul id="termainl-list-ul">
+        </ul>
+    </div>
+    <div id="json-edit">
+        <h2>Edit settings.json</h2>
+        <textarea id="json-edit-textarea" rows="20" cols="80" spellcheck="false"></textarea>
+    </div>
+    <div>
+        <h2>View in browser</h2>
+        <a href="/settings.json" target="_blank">view settings.json</a>
+    </div>
+</body>
+</html>

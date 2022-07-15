@@ -1,16 +1,7 @@
 #pragma once
 
-#if __GNUC__
-#define NTSTATUS long
-#else
 typedef _Return_type_success_(return >= 0) LONG NTSTATUS;
-#endif
-
 #define NT_SUCCESS(Status)  (((NTSTATUS)(Status)) >= 0)
-
-#ifndef __kernel_entry
-#define __kernel_entry 
-#endif
 
 typedef struct _UNICODE_STRING {
 	USHORT Length;
@@ -267,14 +258,6 @@ typedef struct _FILE_INTERNAL_INFORMATION {
 typedef struct _FILE_KNOWN_FOLDER_INFORMATION {
     FILE_KNOWN_FOLDER_TYPE Type;
 } FILE_KNOWN_FOLDER_INFORMATION, * PFILE_KNOWN_FOLDER_INFORMATION;
-
-typedef enum _STORAGE_RESERVE_ID {
-  StorageReserveIdNone,
-  StorageReserveIdHard,
-  StorageReserveIdSoft,
-  StorageReserveIdUpdateScratch,
-  StorageReserveIdMax
-} STORAGE_RESERVE_ID, *PSTORAGE_RESERVE_ID;
 
 typedef struct _FILE_STORAGE_RESERVE_ID_INFORMATION {
     STORAGE_RESERVE_ID StorageReserveId;

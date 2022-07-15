@@ -1,4 +1,4 @@
- DWORD __stdcall RunIOCPLoop(LPVOID) {
+DWORD __stdcall RunIOCPLoop(LPVOID) {
 	DWORD dwbytes = 0;
 	IOCP* ctx = NULL;
 	OVERLAPPED* ol = NULL;
@@ -11,15 +11,18 @@
 					accept_next();
 					continue;
 				}
-				int err = GetLastError();
+				int err = WSAGetLastError();
 				switch (err) {
-				case ERROR_CONNECTION_ABORTED:
-				{
-					CloseClient(ctx);
-				}break;
 				case ERROR_OPERATION_ABORTED:
 				{
-					log_puts("[error] ERROR_OPERATION_ABORTED");
+					/* CancelIoEx cancel WSARecv operation */
+					/* Or thread exit! */
+					puts("ERROR_OPERATION_ABORTED! the WSARecv operation is aborted!");
+				}break;
+				case ERROR_CONNECTION_ABORTED:
+				{
+					printf("[error] ERROR_OPERATION_ABORTED at %p, CloseClient\n", ctx);
+					CloseClient(ctx);
 				}break;
 				default:
 					assert(0);
@@ -48,7 +51,39 @@
 			continue;
 		}
 		if (dwbytes == 0) {
-			CloseClient(ctx);
+			if (ctx->state == State::AfterDisconnect)
+			{
+				if (closesocket(ctx->client) != 0) {
+					ctx->client = INVALID_SOCKET;
+					assert(0);
+				}
+				if (ctx->sbuf) {
+					ctx->sbuf->~basic_string();
+					ctx->sbuf = NULL;
+				}
+
+				if (ctx->hasp) {
+					(&ctx->p)->~Parse_Data();
+				}
+				if (ctx->url) {
+					HeapFree(heap, 0, (LPVOID)ctx->url);
+					ctx->url = NULL;
+				}
+				if (ctx->hProcess && ctx->hProcess != INVALID_HANDLE_VALUE) {
+					CloseHandle(ctx->hProcess);
+					ctx->hProcess = NULL;
+				}
+				if (ctx->dir) {
+					if (HeapFree(heap, 0, ctx->dir)==FALSE) {
+						assert(0);
+					}
+				}
+				HeapFree(heap, 0, ctx);
+				printf("free client %p\n", ctx);
+			}
+			else {
+				CloseClient(ctx);
+			}
 			continue;
 		}
 		if (ol == &dumyOL) {
