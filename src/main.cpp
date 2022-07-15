@@ -1,5 +1,33 @@
+#ifdef __GNUC__
+/*
+ * compile with gcc plus g++
+ * $ cd src
+ * $ gcc -c llhttp\*.c
+ * $ g++ .\main.cpp *.o  -lws2_32 -lcrypt32 -lbcrypt -lwininet -lShlwapi -lIPHLPAPI -o server.exe
+ */
+#define _WIN32_WINNT 999999999999999
+#define WIN32_WINNT 999999999999999
+#define UNICODE
+#define _UNICODE
+#define TCP_KEEPIDLE 3
+#define URL_UNESCAPE_AS_UTF8 0x40000
+#define DEBUG
+#define _DEBUG
+typedef unsigned long long u64;
+u64 ntohll(u64 value){
+	return 
+	(u64)(*(unsigned char*)&value << 24) |  
+	(u64)(*(unsigned char*)&value << 16) | 
+	(u64)(*(unsigned char*)&value << 8) | 
+	(u64)(*(unsigned char*)&value);
+}
+#define CONSTEVAL
+#else
+#define CONSTEVAL consteval
+#endif
 #define _CRT_SECURE_NO_WARNINGS // sprintf
 #define N_THREADS 1
+
 #include <winsock2.h>
 #include <Ws2tcpip.h>
 #include <mstcpip.h>
@@ -12,7 +40,7 @@
 #include <string>
 #include <shlwapi.h>
 #include "NtAPI.h"
-#include "llhttp.h"
+#include "llhttp/llhttp.h"
 #include "types.h"
 #pragma comment(lib, "ws2_32")
 #pragma comment(lib, "mswsock") 
@@ -30,7 +58,6 @@ struct IOCP;
 #if N_THREADS > 1
 static HANDLE hThs[N_THREADS-1];
 #endif
-
 #ifdef _DEBUG
 #define log_puts(x) puts(x)
 #define log_fmt printf
@@ -76,8 +103,15 @@ BOOL WINAPI ConsoleHandler(DWORD event)
 #pragma warning(disable: 6308)
 #pragma warning(disable: 28182)
 
+#ifdef __GNUC__
+int main(void)
+#else
 int wmain(void)
+#endif
 {
+	if (SetCurrentDirectoryW(L"../static")==FALSE){
+		return -1;
+	}
 	heap = GetProcessHeap();
 	if (heap == NULL) {
 		fatal("GetProcessHeap");

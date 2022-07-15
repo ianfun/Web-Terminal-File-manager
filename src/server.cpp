@@ -46,6 +46,7 @@ void parse_keepalive(IOCP* ctx) {
 	_ASSERT(_CrtCheckMemory());
 }
 void CloseClient(IOCP* ctx) {
+	printf("close client %p\n", ctx);
 	if (ctx->state != State::AfterClose) {
 		ctx->state = State::AfterClose;
 		(void)shutdown(ctx->client, SD_BOTH);
@@ -212,6 +213,7 @@ void processIOCP(IOCP* ctx, OVERLAPPED* ol, DWORD dwbytes) {
 	{
 		if (ctx->keepalive) {
 			ctx->sbuf->~basic_string();
+			ctx->sbuf = NULL; /*important: invoid multiple ~free*/
 			ctx->state = State::AfterRecv;
 			ctx->dwFlags = 0;
 			assert(ctx->recvOL.hEvent == NULL);

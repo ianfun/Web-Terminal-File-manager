@@ -47,7 +47,7 @@ void closeHash(){
         HeapFree(heap, 0, hashO);
     }
 }
-BOOL HashHanshake(void* key, ULONG length, char *buf/*29 bytes*/){
+BOOL HashHanshake(const char* key, ULONG length, char *buf/*29 bytes*/){
     BYTE   sha1_o[20]{};
     // SHA-1 20 bytes hash
     if ((BCryptHashData(hHash, (PUCHAR)key, length, 0)) < 0)
