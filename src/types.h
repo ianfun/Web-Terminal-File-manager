@@ -10,6 +10,11 @@ namespace Websocket {
 	};
 }
 
+#ifdef __GNUC__
+#define CONSTEVAL
+#else
+#define CONSTEVAL consteval
+#endif
 template <ULONG N>
 CONSTEVAL ULONG cstrlen(const char(&)[N]) {
 	return N - 1;
@@ -22,7 +27,7 @@ CONSTEVAL ULONG  cstrlen(const char* s) {
 	return res;
 }
 enum class State : unsigned __int8 {
-	AfterRecv, ReadStaticFile, SendPartFile, RecvNextRequest,ListDirRecvNextRequest, PostWritePartFile, POSTWaitFileData, PostRecvNectRequest, AfterSendHTML, AfterHandShake, WebSocketConnecting, AfterClose
+	AfterRecv, ReadStaticFile, SendPartFile, RecvNextRequest,ListDirRecvNextRequest, PostWritePartFile, POSTWaitFileData, PostRecvNectRequest, AfterSendHTML, AfterHandShake, WebSocketConnecting, AfterDisconnect
 };
 int http_on_header_field(llhttp_t* parser, const char* at, size_t length);
 int http_on_header_value(llhttp_t* parser, const char* at, size_t length);
@@ -48,7 +53,6 @@ struct Parse_Data {
 
 struct IOCP {
 	Parse_Data p;
-	bool hasp;
 	WCHAR* url;
 	UINT64 filesize;
 	COORD coord;
@@ -58,22 +62,22 @@ struct IOCP {
 	/*
 	* sendOL is used in WSASend, while recvOL is used in ReadFile or WriteFile
 	*/
-	char buf[4096+64];
 	char padding; /*the EOS char*/
 	DWORD dwFlags;
 	WSABUF sendBuf[2], recvBuf[1], conpty[2];
-	bool Reading6Bytes;
 	unsigned __int64 payload_len;
+	int cmd;
+	WCHAR* dir;
 	BYTE header[4];
 	Websocket::Opcode op;
-	bool keepalive, firstCon;
 	HANDLE hStdOut, hStdIn;
 	HPCON hPC;
 	HANDLE hReadThread;
 	HANDLE waitHandle;
 	HANDLE hProcess;
 	std::string* sbuf;
-	LPPROC_THREAD_ATTRIBUTE_LIST addrlist;
+	LPPROC_THREAD_ATTRIBUTE_LIST addrlist;char buf[4096+64];
+	bool keepalive: 1,  firstCon:1, is_close_frame_sent, Reading6Bytes: 1, hasp: 1;
 };
 
 namespace HTTP_ERR_RESPONCE {

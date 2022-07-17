@@ -156,7 +156,15 @@ window.onload = () => {
     document.documentElement.appendChild(menu);
     normalMode();
     goodURL();
-    document.querySelector('h1').innerText = "Directory listing for " + decodeURIComponent(location.pathname.slice(1)) + " (" + d.getAttribute("d") + "'s computer)";
+    let dir = decodeURIComponent(location.pathname.slice(1));
+    document.querySelector('h1').innerText = "Directory listing for " + dir + " (" + d.getAttribute("d") + "'s computer)";
+    var termina_here = document.createElement("button");
+    termina_here.innerText = "Terminal here";
+    termina_here.onclick = function () {
+        sessionStorage.setItem("shell-dir", dir);
+        var term = open("/index.html");
+    }
+    document.documentElement.appendChild(termina_here);
 }
 function normalMode() {
     uploadMenu.onclick = () => f.click();

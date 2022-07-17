@@ -46,26 +46,13 @@ void parse_keepalive(IOCP* ctx) {
 	_ASSERT(_CrtCheckMemory());
 }
 void CloseClient(IOCP* ctx) {
-	printf("close client %p\n", ctx);
-	if (ctx->state != State::AfterClose) {
-		ctx->state = State::AfterClose;
-		(void)shutdown(ctx->client, SD_BOTH);
-		if (closesocket(ctx->client) != 0) {
-			assert(0);
-		}
-		if (ctx->sbuf) {
-			ctx->sbuf->~basic_string();
-		}
-		if (ctx->hasp) {
-			(&ctx->p)->~Parse_Data();
-		}
-		if (ctx->url) {
-			HeapFree(heap, 0, (LPVOID)ctx->url);
-		}
-		if (ctx->hProcess && ctx->hProcess != INVALID_HANDLE_VALUE) {
-			CloseHandle(ctx->hProcess);
-		}
-		if (HeapFree(heap, 0, (LPVOID)ctx) == FALSE) {
+	ctx->state = State::AfterDisconnect;
+	CancelIoEx((HANDLE)ctx->client, NULL);
+	if (pDisconnectEx(ctx->client, &ctx->sendOL, 0, NULL)) {
+
+	}
+	else {
+		if (WSAGetLastError() != ERROR_IO_PENDING) {
 			assert(0);
 		}
 	}
@@ -76,26 +63,26 @@ int http_on_header_complete(llhttp_t* parser) {
 	if (parser->method == llhttp_method_t::HTTP_POST) {
 		WSABUF* errBuf = &HTTP_ERR_RESPONCE::internal_server_error;
 		LPCWSTR path = urlToPath(ctx);
-			HANDLE hFile = CreateFileW(path,
-				GENERIC_WRITE,
-				FILE_SHARE_WRITE,
-				NULL,
-				CREATE_ALWAYS,
-				FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OVERLAPPED,
-				NULL);
-			log_fmt("[info] create file: %ws\n", path);
-			if (hFile == INVALID_HANDLE_VALUE || CreateIoCompletionPort(hFile, iocp, (ULONG_PTR)ctx, N_THREADS)==NULL) {
-				log_fmt("[warn] file handle error %lld, err=%d\n", (__int64)hFile, GetLastError());
-				errBuf = &HTTP_ERR_RESPONCE::internal_server_error;
-				goto BAD_REQUEST_AND_RELEASE;
-			}
-			ctx->hProcess = hFile;
-			assert(ctx->sendOL.Offset == 0);
-			assert(ctx->sendOL.OffsetHigh == 0);
-			assert(ctx->sendOL.hEvent==NULL);
-			ctx->state = State::POSTWaitFileData;
-			return 0;
-		
+		HANDLE hFile = CreateFileW(path,
+			GENERIC_WRITE,
+			FILE_SHARE_WRITE,
+			NULL,
+			CREATE_ALWAYS,
+			FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OVERLAPPED,
+			NULL);
+		log_fmt("[info] create file: %ws\n", path);
+		if (hFile == INVALID_HANDLE_VALUE || CreateIoCompletionPort(hFile, iocp, (ULONG_PTR)ctx, N_THREADS) == NULL) {
+			log_fmt("[warn] file handle error %lld, err=%d\n", (__int64)hFile, GetLastError());
+			errBuf = &HTTP_ERR_RESPONCE::internal_server_error;
+			goto BAD_REQUEST_AND_RELEASE;
+		}
+		ctx->hProcess = hFile;
+		assert(ctx->sendOL.Offset == 0);
+		assert(ctx->sendOL.OffsetHigh == 0);
+		assert(ctx->sendOL.hEvent == NULL);
+		ctx->state = State::POSTWaitFileData;
+		return 0;
+
 	BAD_REQUEST_AND_RELEASE:
 		CloseClient(ctx); // quickly shutdown POST request
 		return -1;
@@ -126,29 +113,36 @@ int http_on_header_value(llhttp_t* parser, const char* at, size_t length) {
 	Parse_Data* p = (Parse_Data*)parser;
 	p->headers[std::string(p->at, p->length)] = std::string(at, length);
 	return 0;
-}		
-
+}
+WCHAR* URIComponentToWideChar(char* s) {
+	if (UrlUnescapeA(s, NULL, NULL, URL_UNESCAPE_INPLACE | URL_UNESCAPE_AS_UTF8) != S_OK) {
+		assert(0);
+		return NULL;
+	}
+	int len = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, s, -1, NULL, 0);
+	if (len <= 0) {
+		log_puts("[client error] the url is not UTF-8 encoded");
+		return NULL;
+	}
+	WCHAR* res = (WCHAR*)HeapAlloc(heap, 0, (SIZE_T)len * 2);
+	if (res == NULL) {
+		log_puts("[error] HeapAlloc failed!");
+		return NULL;
+	}
+	len = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, s, -1, res, len);
+	assert(len > 0);
+	return res;
+}
 int http_on_url(llhttp_t* parser, const char* at, size_t length) {
-	if(length == 1){
+	if (length == 1) {
 		return 0;
 	}
 	IOCP* ctx = reinterpret_cast<IOCP*>(parser);
-	std::string tmp{at+1, length-1};
-	if (UrlUnescapeA(&tmp[0], NULL, NULL, URL_UNESCAPE_INPLACE | URL_UNESCAPE_AS_UTF8)!=S_OK){
-		assert(0);
-	}
-	int len = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, tmp.data(), -1, NULL, 0);
-	if(len <= 0){
-		log_fmt("[client error] the url is not UTF-8 encoded(%*.s)\n", (int)length, at);
+	std::string tmp{ at + 1, length - 1 };
+	ctx->url = URIComponentToWideChar(&tmp[0]);
+	if (ctx->url == NULL) {
 		return -1;
 	}
-	ctx->url = (WCHAR*)HeapAlloc(heap, 0, (SIZE_T)len * 2);
-	if(ctx->url == NULL){
-		log_puts("[error] HeapAlloc failed!");
-		return -1;
-	}
-	len = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, tmp.data(), -1, ctx->url, len);
-	assert(len > 0);
 	log_fmt("[request](method=%s, url=%ws)\n", llhttp_method_name((llhttp_method)ctx->p.parser.method), ctx->url);
 	return 0;
 }
@@ -164,6 +158,7 @@ void processIOCP(IOCP* ctx, OVERLAPPED* ol, DWORD dwbytes) {
 		WCHAR name[] = L"cmd";
 		BOOL res = spawn(name, ctx);
 		if (res == FALSE) {
+			log_fmt("[error] create process failed!err=%d\n", WSAGetLastError());
 			int n = snprintf(ctx->buf + 2, sizeof(ctx->buf) - 2, "Server Error: create process failed, GetLastError()=%d", GetLastError());
 			*(PWORD)ctx->buf = htons(1000);
 			assert(n > 0);
@@ -201,6 +196,7 @@ void processIOCP(IOCP* ctx, OVERLAPPED* ol, DWORD dwbytes) {
 	case State::RecvNextRequest:
 	{
 		CloseHandle(ctx->hProcess);
+		ctx->hProcess = NULL;
 		ctx->dwFlags = 0;
 		assert(ctx->recvBuf[0].buf == ctx->buf);
 		assert(ctx->recvBuf[0].len == sizeof(ctx->buf));
@@ -213,7 +209,6 @@ void processIOCP(IOCP* ctx, OVERLAPPED* ol, DWORD dwbytes) {
 	{
 		if (ctx->keepalive) {
 			ctx->sbuf->~basic_string();
-			ctx->sbuf = NULL; /*important: invoid multiple ~free*/
 			ctx->state = State::AfterRecv;
 			ctx->dwFlags = 0;
 			assert(ctx->recvOL.hEvent == NULL);
@@ -225,7 +220,7 @@ void processIOCP(IOCP* ctx, OVERLAPPED* ol, DWORD dwbytes) {
 			CloseClient(ctx);
 		}
 	}break;
-	case  State::PostRecvNectRequest:{
+	case  State::PostRecvNectRequest: {
 		if (ctx->keepalive) {
 			ctx->state = State::AfterRecv;
 			ctx->dwFlags = 0;
@@ -237,13 +232,14 @@ void processIOCP(IOCP* ctx, OVERLAPPED* ol, DWORD dwbytes) {
 	}break;
 	case State::PostWritePartFile:
 	{
-		*(reinterpret_cast<UINT64*>(& ctx->sendOL.Offset)) += dwbytes;
-		if (ctx->p.parser.content_length==0) {
+		*(reinterpret_cast<UINT64*>(&ctx->sendOL.Offset)) += dwbytes;
+		if (ctx->p.parser.content_length == 0) {
 			CloseHandle(ctx->hProcess);
+			ctx->hProcess = NULL;
 			ctx->state = State::PostRecvNectRequest;
 			ctx->sendOL.Offset = ctx->sendOL.OffsetHigh = 0;
 			ctx->sendBuf->buf = ctx->buf;
-			ctx->sendBuf->len = sprintf(ctx->buf, "HTTP/1.1 204 No Content\r\nConnection: %s\r\n\r\n", ctx->keepalive?"keep-alive":"close");;
+			ctx->sendBuf->len = sprintf(ctx->buf, "HTTP/1.1 204 No Content\r\nConnection: %s\r\n\r\n", ctx->keepalive ? "keep-alive" : "close");;
 			WSASend(ctx->client, ctx->sendBuf, 1, NULL, 0, &ctx->sendOL, NULL);
 			break;
 		}
@@ -269,7 +265,6 @@ void processIOCP(IOCP* ctx, OVERLAPPED* ol, DWORD dwbytes) {
 			}
 		}
 		else if (ol == &ctx->sendOL) {
-			CloseClient(ctx);
 		}
 		else {
 			assert(0);
@@ -278,7 +273,6 @@ void processIOCP(IOCP* ctx, OVERLAPPED* ol, DWORD dwbytes) {
 	case State::AfterSendHTML: {
 		CloseClient(ctx);
 	}break;
-	case State::AfterClose:
 	default:
 	{
 		log_fmt("invalid state: %u\n", ctx->state);
@@ -352,36 +346,48 @@ void processRequest(IOCP* ctx, DWORD dwbytes) {
 			if (upgrade != ctx->p.headers.end() && pro != ctx->p.headers.end()) {
 				if (upgrade->second == "websocket") {
 					auto ws_key = ctx->p.headers.find("Sec-WebSocket-Key");
+					const std::string copy_p = pro->second;
 					if (ws_key != ctx->p.headers.end()) {
-						ctx->state = State::AfterHandShake;
-						ws_key->second += "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
-						char buf[29];
-						BOOL ret = HashHanshake(ws_key->second.data(), (ULONG)ws_key->second.length(), buf);
-						assert(ret);
-						int len;
-						len = snprintf(ctx->buf, sizeof(ctx->buf),
-							"HTTP/1.1 101 Switching Protocols\r\n"
-							"Upgrade: WebSocket\r\n"
-							"Connection: Upgrade\r\n"
-							"Sec-WebSocket-Protocol: %s\r\n"
-							"Sec-WebSocket-Accept: %s\r\n\r\n", pro->second.data(), buf);
-						ctx->sendBuf[0].buf = ctx->buf;
-						ctx->sendBuf[0].len = (ULONG)len;
-						WSASend(ctx->client, ctx->sendBuf, 1, NULL, 0, &ctx->sendOL, NULL);
-						PWSTR q = StrChrIW(ctx->url, L'?');
-						if (q) {
-							q++;
-							int n = swscanf_s(q, L"rows=%hu&cols=%hu", &ctx->coord.X, &ctx->coord.Y);
-							if (n != 2) {
-								goto BAD;
+						ctx->dir = URIComponentToWideChar(pro->second.data());
+						if (ctx->dir != NULL) {
+							printf("ctx->dir=%ls\n", ctx->dir);
+							ctx->state = State::AfterHandShake;
+							ws_key->second += "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+							char buf[29];
+							BOOL ret = HashHanshake(ws_key->second.data(), (ULONG)ws_key->second.length(), buf);
+							assert(ret);
+							int len;
+							len = snprintf(ctx->buf, sizeof(ctx->buf),
+								"HTTP/1.1 101 Switching Protocols\r\n"
+								"Upgrade: WebSocket\r\n"
+								"Connection: Upgrade\r\n"
+								"Sec-WebSocket-Protocol: %s\r\n"
+								"Sec-WebSocket-Accept: %s\r\n\r\n", copy_p.data(), buf);
+							ctx->sendBuf[0].buf = ctx->buf;
+							ctx->sendBuf[0].len = (ULONG)len;
+							WSASend(ctx->client, ctx->sendBuf, 1, NULL, 0, &ctx->sendOL, NULL);
+							PWSTR q = StrChrIW(ctx->url, L'?');
+							if (q) {
+								q++;
+								int n = swscanf_s(q, L"rows=%hu&cols=%hu&cmd=%d", &ctx->coord.X, &ctx->coord.Y, &ctx->cmd);
+								if (n != 3) {
+									goto BAD;
+								}
 							}
-						}else{
-							goto BAD;
-							
-						}
+							else {
+								goto BAD;
+
+							}
 						BAD:
-							ctx->coord.X = 130;
-							ctx->coord.Y = 70;
+							ctx->coord.X = 130; /* default cols */
+							ctx->coord.Y = 70; /* Default rows */
+							ctx->cmd = 0;/* Default command */
+						}
+						else {
+							log_puts("[error] URIComponentToWideChar failed!\n");
+							errBuf = &HTTP_ERR_RESPONCE::bad_request;
+							goto BAD_REQUEST_AND_RELEASE;
+						}
 					}
 					else {
 						errBuf = &HTTP_ERR_RESPONCE::bad_request;
@@ -456,7 +462,7 @@ void processRequest(IOCP* ctx, DWORD dwbytes) {
 	case llhttp_method::HTTP_PUT:
 	{
 		BOOL ok = CreateDirectoryW(ctx->url, NULL);
-		log_fmt("[info] create Folder %ws (%s)\n", ctx->url, ok?"ok":"failed");
+		log_fmt("[info] create Folder %ws (%s)\n", ctx->url, ok ? "ok" : "failed");
 		if (ok) {
 			ctx->sendBuf->buf = HTTP_ERR_RESPONCE::new_dir_ok;
 			ctx->sendBuf->len = cstrlen(HTTP_ERR_RESPONCE::new_dir_ok);
@@ -483,7 +489,7 @@ void processRequest(IOCP* ctx, DWORD dwbytes) {
 	{
 		auto newName = ctx->p.headers.find("X-NewName");
 		if (newName != ctx->p.headers.end()) {
-			if (UrlUnescapeA(&newName->second[0], NULL, NULL, URL_UNESCAPE_INPLACE | URL_UNESCAPE_AS_UTF8)!=S_OK) {
+			if (UrlUnescapeA(&newName->second[0], NULL, NULL, URL_UNESCAPE_INPLACE | URL_UNESCAPE_AS_UTF8) != S_OK) {
 				errBuf = &HTTP_ERR_RESPONCE::client_percent_err;
 				goto BAD_REQUEST_AND_RELEASE;
 			}
@@ -492,7 +498,7 @@ void processRequest(IOCP* ctx, DWORD dwbytes) {
 				errBuf = &HTTP_ERR_RESPONCE::client_utf8_err;
 				goto BAD_REQUEST_AND_RELEASE;
 			}
-			WCHAR* newNameW = (WCHAR*)HeapAlloc(heap, 0, (SIZE_T)len*2);
+			WCHAR* newNameW = (WCHAR*)HeapAlloc(heap, 0, (SIZE_T)len * 2);
 			len = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, newName->second.data(), -1, newNameW, len);
 			assert(len > 0);
 			int err = RenameFile(ctx->url, newNameW, len);
@@ -516,7 +522,7 @@ void processRequest(IOCP* ctx, DWORD dwbytes) {
 			WSASend(ctx->client, ctx->sendBuf, 1, NULL, 0, &ctx->sendOL, NULL);
 			break;
 		}
-		if ((ctx->p.headers.find("X-Recursively"))!=ctx->p.headers.end()) {
+		if ((ctx->p.headers.find("X-Recursively")) != ctx->p.headers.end()) {
 			int err = DeleteDirectory(ctx->url);
 			log_fmt("[info] DELETE recursively %ws (err=%d)\n", ctx->url, err);
 			switch (err)

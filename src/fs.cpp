@@ -77,6 +77,7 @@ int RenameFile(LPCWSTR oldname, LPCWSTR newname, DWORD newnameLen) {
 	info->ReplaceIfExists = TRUE;
 	info->RootDirectory = NULL;
 	info->FileNameLength = newnameLen;
+	info->Flags = FILE_RENAME_FLAG_POSIX_SEMANTICS;
 	memcpy(info->FileName, newname, ((SIZE_T)newnameLen + 1) * 2);
 	BOOL res = SetFileInformationByHandle(hFile, FileRenameInfo, info, (DWORD)infoSize);
 	HeapFree(heap, 0, info);
@@ -260,7 +261,7 @@ void list_dir_entry_ex(IOCP* ctx)
 				"Connection: %s\r\n"
 				"Content-Length: %zu\r\n"
 				"\r\n%s";
-//			static_assert(sizeof(ctx->buf)>=(cstrlen(fmt) + cstrlen(LISTDIR_FIRST_EX)+7));
+			static_assert(sizeof(ctx->buf)>=(cstrlen(fmt) + cstrlen(LISTDIR_FIRST_EX)+7));
 			int n = sprintf(
 				ctx->buf,
 				fmt,
