@@ -1,10 +1,11 @@
-#include <windows.h>
-#include <tchar.h>
-#include <strsafe.h>
+// the HTTPServer service - iinstall the service before you run it
 
 #pragma comment(lib, "advapi32.lib")
 
-WCHAR SVCNAME[] = L"HTTPServer";
+wchar_t SVCNAME[] = L"HTTPServer";
+#define PORT 80
+#include "../../src/run.cpp"
+#define SVC_ERROR                        ((DWORD)0xC0020001L)
 
 SERVICE_STATUS          gSvcStatus;
 SERVICE_STATUS_HANDLE   gSvcStatusHandle;
@@ -45,7 +46,7 @@ VOID WINAPI SvcMain(DWORD dwArgc, LPTSTR* lpszArgv)
 VOID SvcInit(DWORD dwArgc, LPTSTR* lpszArgv)
 {
     ReportSvcStatus(SERVICE_RUNNING, NO_ERROR, 0);
-    run(0);
+    run(NULL);
     ReportSvcStatus(SERVICE_STOPPED, NO_ERROR, 0);
 }
 

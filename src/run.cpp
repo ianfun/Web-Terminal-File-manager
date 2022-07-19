@@ -14,7 +14,7 @@
 #include <string>
 #include <shlwapi.h>
 #include "NtAPI.h"
-#include "llhttp.h"
+#include <llhttp.h>
 #include "types.h"
 #pragma comment(lib, "advapi32.lib")
 #pragma comment(lib, "ws2_32")
@@ -54,7 +54,7 @@ static HANDLE hThs[N_THREADS-1];
 #endif
 
 __declspec(noreturn) void fatal(const char* msg) {
-	printf("[fatal error] %s\nExit...\n", msg);
+	log_fmt("[fatal error] %s\nWSAGetLastError=%d\n", msg, WSAGetLastError());
 	ExitProcess(1);
 }
 void closeClient(IOCP* ctx);
@@ -71,19 +71,6 @@ void accept_next();
 #include "pipe.cpp"
 #include "server.cpp"
 #include "accept.cpp"
-
-
-BOOL WINAPI ConsoleHandler(DWORD event)
-{
-	switch (event) {
-	case CTRL_C_EVENT:
-		for (int i = 0; i < N_THREADS; ++i) {
-			PostQueuedCompletionStatus(iocp, 0, 0, 0);
-		}
-		return TRUE;
-	}
-	return FALSE;
-}
 
 #pragma warning(push)
 #pragma warning(disable: 6308)
@@ -148,8 +135,12 @@ DWORD __stdcall run(LPVOID param)
 	if (!initHash()) {
 		fatal("initHash");
 	}
-	sockaddr_in ip4{ .sin_family = AF_INET, .sin_port = htons(80) };
-	/* {
+#ifndef PORT
+#define PORT 80
+#endif
+	sockaddr_in ip4{ .sin_family = AF_INET, .sin_port = htons(PORT) };
+#ifdef  CONSOLE_APP
+	{
 		PIP_ADAPTER_INFO pAdapter = (IP_ADAPTER_INFO*)HeapAlloc(heap, 0, sizeof(IP_ADAPTER_INFO));
 		ULONG ulOutBufLen = sizeof(IP_ADAPTER_INFO);
 		if (pAdapter == NULL) {
@@ -179,7 +170,7 @@ DWORD __stdcall run(LPVOID param)
 				num--;
 				head = head->Next;
 			}
-			printf("selected address: %s\n", head->IpAddressList.IpAddress.String);
+			log_fmt("selected address: %s\n", head->IpAddressList.IpAddress.String);
 			if (inet_pton(AF_INET, head->IpAddressList.IpAddress.String, (SOCKADDR*)&ip4) != 1) {
 				fatal("inet_pton");
 			}
@@ -194,8 +185,8 @@ DWORD __stdcall run(LPVOID param)
 			fatal("GetAdaptersInfo");
 		}
 		HeapFree(heap, 0, pAdapter);
-	}*/
-
+	}
+#endif
 	acceptIOCP.server = WSASocketW(AF_INET, SOCK_STREAM, IPPROTO_TCP, NULL, 0, WSA_FLAG_OVERLAPPED);
 	if (acceptIOCP.server == INVALID_SOCKET) {
 		fatal("WSASocketW");
@@ -223,7 +214,6 @@ DWORD __stdcall run(LPVOID param)
 		fatal("CreateIoCompletionPort");
 	}
 	accept_next();
-	SetConsoleCtrlHandler(ConsoleHandler, TRUE);
 	
 #if N_THREADS > 1
 	for (int i = 0; i < N_THREADS-1; ++i) {
@@ -234,7 +224,7 @@ DWORD __stdcall run(LPVOID param)
 #endif
 	log_fmt("[info] running main iocp thread: (id=%u)\n", GetCurrentThreadId());
 	(void)RunIOCPLoop(NULL);
-	printf("[info] exit main iocp loop (id=%u), wait for all threads exit\n", GetCurrentThreadId());
+	log_fmt("[info] exit main iocp loop (id=%u), wait for all threads exit\n", GetCurrentThreadId());
 #if N_THREADS > 1
 	WaitForMultipleObjects(N_THREADS - 1, hThs, TRUE, INFINITE);
 #endif
@@ -251,4 +241,4 @@ DWORD __stdcall run(LPVOID param)
 }
 #pragma warning(pop)
 
-#include "service.h"
+

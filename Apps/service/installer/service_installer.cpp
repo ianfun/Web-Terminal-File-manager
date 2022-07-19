@@ -1,6 +1,6 @@
-#include <windows.h>
+#include "../pch.h"
 
-// this program needs admin mode
+// this program needs admin mode(requireAdministrator (/level='requireAdministrator'))
 
 VOID SvcInstall(const WCHAR* path)
 {
@@ -45,5 +45,5 @@ VOID SvcInstall(const WCHAR* path)
 }
 
 int main(){
-	SvcInstall(L"C:\\Program Files\\HTTPServer");
+	SvcInstall(L"C:\\Program Files\\HTTPServer\\service.exe");
 }

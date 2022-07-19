@@ -27,7 +27,6 @@ DWORD __stdcall RunIOCPLoop(LPVOID) {
 				default:
 					assert(0);
 				}
-
 			}
 			continue;
 		}
@@ -43,7 +42,7 @@ DWORD __stdcall RunIOCPLoop(LPVOID) {
 			continue;
 		}
 		if (ctx == NULL || ol == NULL) {
-			if (ctx == (IOCP*)1) {
+			if (ctx == (IOCP*)RunIOCPLoop) {
 				printf("[info] exit thread (id=%u)\n", GetCurrentThreadId());
 				return 0;
 			}
@@ -79,7 +78,6 @@ DWORD __stdcall RunIOCPLoop(LPVOID) {
 					}
 				}
 				HeapFree(heap, 0, ctx);
-				printf("free client %p\n", ctx);
 			}
 			else {
 				CloseClient(ctx);

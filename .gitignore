@@ -1,3 +1,11 @@
 *.o
 *.exe
 *.obj
+node_modules/
+x64/
+.vscode/
+.vs/
+*.exe
+*.obj
+*.o
+*.msi
