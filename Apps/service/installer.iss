@@ -49,7 +49,7 @@ Name: "ukrainian"; MessagesFile: "compiler:Languages\Ukrainian.isl"
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
 [Files]
-Source: "..\..\static\*"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\..\static\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs
 Source: "./x64/Release/installer.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "./x64/Release/service.exe"; DestDir: "{app}"; Flags: ignoreversion
 
