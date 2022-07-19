@@ -10,12 +10,13 @@ AppVersion={#MyAppVersion}
 AppPublisherURL={#MyAppURL}
 AppSupportURL={#MyAppURL}
 AppUpdatesURL={#MyAppURL}
-DefaultDirName={autopf}\{#MyAppName}
+DefaultDirName={commonpf64}\{#MyAppName}
 DisableProgramGroupPage=yes
-OutputBaseFilename=mysetup
+OutputBaseFilename=HTTPServer_setup
 Compression=lzma
 SolidCompression=yes
 WizardStyle=modern
+DisableDirPage=yes
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -53,5 +54,7 @@ Source: "./x64/Release/installer.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "./x64/Release/service.exe"; DestDir: "{app}"; Flags: ignoreversion
 
 [Run]
-Filename: "{app}\install.exe"; Flags: 64bit skipifsilent runascurrentuser; Parameters: install
+Filename: "{app}\installer.exe"; Flags: 64bit skipifsilent runascurrentuser;
 
+[UninstallRun]
+Filename: "sc delete HTTPServer"; Flags: runascurrentuser; RunOnceId: "DeleteService"

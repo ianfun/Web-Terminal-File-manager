@@ -12,10 +12,7 @@ SERVICE_STATUS_HANDLE   gSvcStatusHandle;
 
 VOID WINAPI SvcCtrlHandler(DWORD);
 VOID WINAPI SvcMain(DWORD, LPTSTR*);
-
 VOID ReportSvcStatus(DWORD, DWORD, DWORD);
-VOID SvcInit(DWORD, LPTSTR*);
-VOID SvcReportEvent(LPCWSTR);
 
 int __cdecl wmain(int argc, WCHAR** argv)
 {
@@ -24,7 +21,22 @@ int __cdecl wmain(int argc, WCHAR** argv)
         { SVCNAME, (LPSERVICE_MAIN_FUNCTION)SvcMain },
         { NULL, NULL }
     };
-    StartServiceCtrlDispatcherW(f);
+    if (StartServiceCtrlDispatcherW(f)) {
+        return 0;
+    }
+    switch (GetLastError())
+    {
+    case ERROR_FAILED_SERVICE_CONTROLLER_CONNECT:
+        fputs("StartServiceCtrlDispatcherW: ERROR_FAILED_SERVICE_CONTROLLER_CONNECT: the program is running as a console application", stderr);
+        break;
+    case ERROR_SERVICE_ALREADY_RUNNING:
+        fputs("ERROR_SERVICE_ALREADY_RUNNING: the service is already running", stderr);
+        break;
+    default:
+        fprintf(stderr, "StartServiceCtrlDispatcherW: error=%lu\n", GetLastError());
+        break;
+    }
+    return 1;
 }
 
 VOID WINAPI SvcMain(DWORD dwArgc, LPTSTR* lpszArgv)
@@ -34,21 +46,17 @@ VOID WINAPI SvcMain(DWORD dwArgc, LPTSTR* lpszArgv)
         SvcCtrlHandler);
     if (!gSvcStatusHandle)
     {
-        SvcReportEvent(L"RegisterServiceCtrlHandler");
         return;
     }
     gSvcStatus.dwServiceType = SERVICE_WIN32_OWN_PROCESS;
     gSvcStatus.dwServiceSpecificExitCode = 0;
     ReportSvcStatus(SERVICE_START_PENDING, NO_ERROR, 3000);
-    SvcInit(dwArgc, lpszArgv);
-}
-
-VOID SvcInit(DWORD dwArgc, LPTSTR* lpszArgv)
-{
+    SetCurrentDirectoryW(L"C:\\Program Files\\WebServer");
     ReportSvcStatus(SERVICE_RUNNING, NO_ERROR, 0);
     run(NULL);
     ReportSvcStatus(SERVICE_STOPPED, NO_ERROR, 0);
 }
+
 
 VOID ReportSvcStatus(DWORD dwCurrentState,
     DWORD dwWin32ExitCode,
@@ -76,7 +84,7 @@ VOID WINAPI SvcCtrlHandler(DWORD dwCtrl)
     {
     case SERVICE_CONTROL_STOP:
         ReportSvcStatus(SERVICE_STOP_PENDING, NO_ERROR, 0);
-        PostQueuedCompletionStatus(iocp, 0, 0, 0);
+        PostQueuedCompletionStatus(iocp, 0, (ULONG_PTR)RunIOCPLoop, 0);
         ReportSvcStatus(gSvcStatus.dwCurrentState, NO_ERROR, 0);
         return;
 
@@ -87,62 +95,4 @@ VOID WINAPI SvcCtrlHandler(DWORD dwCtrl)
         break;
     }
 
-}
-
-VOID SvcReportEvent(LPTSTR szFunction)
-{
-    HANDLE hEventSource;
-    LPCTSTR lpszStrings[2];
-    TCHAR Buffer[80];
-
-    hEventSource = RegisterEventSource(NULL, SVCNAME);
-
-    if (NULL != hEventSource)
-    {
-        StringCchPrintf(Buffer, 80, TEXT("%s failed with %d"), szFunction, GetLastError());
-
-        lpszStrings[0] = SVCNAME;
-        lpszStrings[1] = Buffer;
-
-        ReportEvent(hEventSource,        // event log handle
-            EVENTLOG_ERROR_TYPE, // event type
-            0,                   // event category
-            SVC_ERROR,           // event identifier
-            NULL,                // no security identifier
-            2,                   // size of lpszStrings array
-            0,                   // no binary data
-            lpszStrings,         // array of strings
-            NULL);               // no binary data
-
-        DeregisterEventSource(hEventSource);
-    }
-}
-
-VOID SvcReportEvent(LPCWSTR szFunction)
-{
-    HANDLE hEventSource;
-    LPCTSTR lpszStrings[2];
-    WCHAR Buffer[80];
-
-    hEventSource = RegisterEventSource(NULL, SVCNAME);
-
-    if (NULL != hEventSource)
-    {
-        StringCchPrintf(Buffer, 80, (L"%s failed with %d"), szFunction, GetLastError());
-
-        lpszStrings[0] = SVCNAME;
-        lpszStrings[1] = Buffer;
-
-        ReportEventW(hEventSource,        // event log handle
-            EVENTLOG_ERROR_TYPE, // event type
-            0,                   // event category
-            SVC_ERROR,           // event identifier
-            NULL,                // no security identifier
-            2,                   // size of lpszStrings array
-            0,                   // no binary data
-            lpszStrings,         // array of strings
-            NULL);               // no binary data
-
-        DeregisterEventSource(hEventSource);
-    }
 }
