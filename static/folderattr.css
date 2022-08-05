@@ -1,0 +1,57 @@
+﻿a.directory::before {
+    content: "📂";
+    color: gray;
+}
+
+a.archive::before {
+    content: "📄";
+    color: gray;
+}
+
+a.system::after {
+    content: "(system)";
+    color: firebrick;
+}
+
+a.temporary::after {
+    content: "(temporary)";
+    color: gray;
+}
+
+a.temporary::after {
+    content: "🔒(read-only)";
+    color: gray;
+}
+a.hidden {
+    color: #939393;
+}
+a.compressed::after {
+    content: "🗜(compressed)";
+    color: gray;
+    text-decoration: none;
+}
+
+a {
+    margin-left: 5px;
+    color: #056aa8;
+    text-decoration:none;
+}
+table {
+    width: 100%;
+    padding-left: 1em;
+    padding-right: 1em;
+    text-align: left;
+}
+th {
+    background-color: #d8cfc1ab;
+}
+div.upload {
+    width: 0px;
+    background-color: initial;
+    height: 100%;
+}
+div.outer {
+    width: 150px;
+    height: 15px;
+    background-color:dodgerblue;
+}
