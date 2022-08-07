@@ -54,7 +54,93 @@ Source: "./x64/Release/installer.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "./x64/Release/service.exe"; DestDir: "{app}"; Flags: ignoreversion
 
 [Run]
-Filename: "{app}\installer.exe"; Flags: 64bit skipifsilent runascurrentuser; Parameters: user
+Filename: "{app}\installer.exe"; Flags: 64bit skipifsilent runascurrentuser; Parameters: "{code:serviceMode}"
 
 [UninstallRun]
 Filename: "sc delete HTTPServer"; Flags: runascurrentuser; RunOnceId: "DeleteService"
+
+[Code]
+const
+  NTText =
+    'Run as "nt authority/system" service.\nThis is use the system account when creating child process.No login is required in this option, and child process will use system environments.';
+  UserText =
+    'Login via UI.Run as user service.\nThis requires login you account, and use your acount when creating child process.';
+  CmdText =
+    'Login via cmd(command line).Same as login via UI, but use windows command prompt for login.';
+var
+  UserBtn: TNewRadioButton;
+  NTBtn: TNewRadioButton;
+  CmdBtn: TNewRadioButton;
+
+procedure InitializeWizard;
+var
+  myPage: TWizardPage;
+  NTLable: TLabel;
+  userLable: TLabel;
+  CmdLable: TLabel;
+begin
+  myPage := CreateCustomPage(wpSelectTasks, 'Service account', 'The service account will effect when the service creating process.We recommend login via dialog to creating process in your account.');
+  
+  UserBtn := TNewRadioButton.Create(WizardForm);
+  UserBtn.Parent := myPage.Surface;
+  UserBtn.Checked := True;
+  UserBtn.Top := 20;
+  UserBtn.Width := myPage.SurfaceWidth;
+  UserBtn.Font.Style := [fsBold];
+  UserBtn.Font.Size := 9;
+  UserBtn.Caption := 'Login via UI Dialog(Recommend)'
+  userLable := TLabel.Create(WizardForm);
+  userLable.Parent := myPage.Surface;
+  userLable.Left := 8;
+  userLable.Top := UserBtn.Top + UserBtn.Height + 20;
+  userLable.Width := myPage.SurfaceWidth; 
+  userLable.Height := 40;
+  userLable.AutoSize := False;
+  userLable.Wordwrap := True;
+  userLable.Caption := UserText;
+
+  NTBtn := TNewRadioButton.Create(WizardForm);
+  NTBtn.Parent := myPage.Surface;
+  NTBtn.Top := userLable.Top + userLable.Height + 20;
+  NTBtn.Width := myPage.SurfaceWidth;
+  NTBtn.Font.Style := [fsBold];
+  NTBtn.Font.Size := 9
+  NTBtn.Caption := 'Use NT AUTHORITY\system account.'
+  NTLable := TLabel.Create(WizardForm);
+  NTLable.Parent := myPage.Surface;
+  NTLable.Left := 8;
+  NTLable.Top := NTBtn.Top + NTBtn.Height + 20;
+  NTLable.Width := myPage.SurfaceWidth;
+  NTLable.Height := 60;
+  NTLable.AutoSize := False;
+  NTLable.Wordwrap := True;
+  NTLable.Caption := NTText;
+
+  CmdBtn := TNewRadioButton.Create(WizardForm);
+  CmdBtn.Parent := myPage.Surface;
+  CmdBtn.Top := NTLable.Top + NTLable.Height + 20;
+  CmdBtn.Width := myPage.SurfaceWidth;
+  CmdBtn.Font.Style := [fsBold];
+  CmdBtn.Font.Size := 9;
+  CmdBtn.Caption := 'Login via cmd.'
+  CmdLable := TLabel.Create(WizardForm);
+  CmdLable.Parent := myPage.Surface;
+  CmdLable.Left := 8;
+  CmdLable.Top := CmdBtn.Top + CmdBtn.Height + 20 ;
+  CmdLable.Width := myPage.SurfaceWidth;
+  CmdLable.Height := 40;
+  CmdLable.AutoSize := False;
+  CmdLable.Wordwrap := True;
+  CmdLable.Caption := CmdText;
+end;
+
+function serviceMode(Param: String): String;
+  begin
+  if UserBtn.Checked then
+      Result := 'user'
+  else
+  if CmdBtn.Checked then
+      Result := 'cmd'
+  else
+      Result := 'admin'
+end;
