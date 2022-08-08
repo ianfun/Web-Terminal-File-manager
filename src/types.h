@@ -34,6 +34,11 @@ int http_on_header_value(llhttp_t* parser, const char* at, size_t length);
 int http_on_url(llhttp_t* parser, const char* at, size_t length);
 int http_on_body(llhttp_t* parser, const char* at, size_t length);
 int http_on_header_complete(llhttp_t* parser);
+
+struct Range {
+	UINT64 start, end;
+};
+
 struct Parse_Data {
 	Parse_Data() : headers{}, at{}, length{} {
 		llhttp_settings_init(&settings);
@@ -59,6 +64,7 @@ struct IOCP {
 	SOCKET client;
 	State state;
 	OVERLAPPED recvOL, sendOL;
+	Range ranges;
 	/*
 	* sendOL is used in WSASend, while recvOL is used in ReadFile or WriteFile
 	*/
