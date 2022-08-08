@@ -17,11 +17,11 @@ DWORD __stdcall RunIOCPLoop(LPVOID) {
 				{
 					/* CancelIoEx cancel WSARecv operation */
 					/* Or thread exit! */
-					puts("ERROR_OPERATION_ABORTED! the WSARecv operation is aborted!");
+					log_fmt("ERROR_OPERATION_ABORTED! the WSARecv operation is aborted!");
 				}break;
 				case ERROR_CONNECTION_ABORTED:
 				{
-					printf("[error] ERROR_OPERATION_ABORTED at %p, CloseClient\n", ctx);
+					log_fmt("[error] ERROR_OPERATION_ABORTED at %p, CloseClient\n", ctx);
 					CloseClient(ctx);
 				}break;
 				default:

@@ -5,6 +5,57 @@ static struct {
 LPCWSTR urlToPath(IOCP* ctx);
 void processRequest(IOCP* ctx, DWORD dwbytes);
 void processIOCP(IOCP* ctx, OVERLAPPED* ol, DWORD dwbytes);
+
+bool parse_range(IOCP *ctx, const unsigned char* p) {
+	ctx->ranges.start = ctx->ranges.end = 0;
+	bool no_start = false;
+	while (*p == ' ') { p++; }
+	if (*p == '-') {
+		no_start = true;
+		++p;
+		while (*p == ' ') { p++; }
+		if (*p < '0' || *p > '9') {
+			return false;
+		}
+	GO:
+		if (*p >= '0' && *p <= '9') {
+			do {
+				ctx->ranges.end = ctx->ranges.end * 10 + (*p++ - '0');
+			} while (*p >= '0' && *p <= '9');
+			if (ctx->ranges.end >= ctx->filesize) {
+				log_fmt("bad range request: ctx->ranges.end >= ctx->filesize\n");
+				return false;
+			}
+			while (*p == ' ') { p++; }
+		}
+		if (no_start) {
+			ctx->ranges.start = ctx->filesize - ctx->ranges.end;
+			ctx->ranges.end = ctx->filesize-1;
+		}
+		return true;
+	}
+	else if (*p >= '0' && *p <= '9') {
+		do {
+			ctx->ranges.start = ctx->ranges.start * 10 + (*p++ - '0');
+		} while (*p >= '0' && *p <= '9');
+		if (ctx->ranges.start >= ctx->filesize) {
+			log_fmt("bad range request: ctx->ranges.start >= ctx->filesize\n");
+			return false;
+		}
+		while (*p == ' ') { p++; }
+		if (*p != '-') {
+			return false;
+		}
+		p++;
+		while (*p == ' ') { p++; }
+		if (*p < '0' || *p > '9') {
+			ctx->ranges.end = ctx->filesize-1;
+			return true;
+		}
+		goto GO;
+	}
+	return false;
+}
 void parse_keepalive(IOCP* ctx) {
 	if (ctx->firstCon) {
 		ctx->firstCon = false;
@@ -173,7 +224,11 @@ void processIOCP(IOCP* ctx, OVERLAPPED* ol, DWORD dwbytes) {
 	}break;
 	case State::ReadStaticFile:
 	{
-		(void)ReadFile(ctx->hProcess, ctx->buf, sizeof(ctx->buf), NULL, &ctx->recvOL);
+		UINT64 toRead = ctx->filesize - *(reinterpret_cast<UINT64*>(&ctx->recvOL.Offset));
+		if (toRead > sizeof(ctx->buf)) {
+			toRead = sizeof(ctx->buf);
+		}
+		(void)ReadFile(ctx->hProcess, ctx->buf, (DWORD)toRead, NULL, &ctx->recvOL);
 		ctx->state = State::SendPartFile;
 	}break;
 	case State::SendPartFile:
@@ -324,15 +379,50 @@ void processRequest(IOCP* ctx, DWORD dwbytes) {
 			assert(r);
 			const char* mine = getType(file);
 			ctx->hProcess = hFile;
-			LARGE_INTEGER fsize{};
-			BOOL bSuccess = GetFileSizeEx(hFile, &fsize);
-			ctx->filesize = (UINT64)fsize.QuadPart;
-			assert(bSuccess);
+			{	
+				LARGE_INTEGER fsize = {0};
+				GetFileSizeEx(hFile, &fsize);
+				ctx->filesize = (UINT64)fsize.QuadPart;
+			}
+			if (ctx->filesize > 0) {
+				auto hrange = ctx->p.headers.find("Range");
+				if (hrange != ctx->p.headers.end()) {
+					const char* p = hrange->second.data();
+					if (p[0] == 'b' && p[1] == 'y' && p[2] == 't' && p[3] == 'e' && p[4] == 's' && p[5] == '=') {
+						p += 6;
+						if (parse_range(ctx, (const unsigned char*)p)) {
+							log_fmt("range request: %llu-%llu\n", ctx->ranges.start, ctx->ranges.end);
+							int res = snprintf(ctx->buf, sizeof(ctx->buf),
+								"HTTP/1.1 206 Partial Content\r\n"
+								"Content-Range: bytes %llu-%llu/%llu\r\n"
+								"Content-Type: %s\r\n"
+								"Content-Length: %llu\r\n"
+								"Connection: %s\r\n\r\n", ctx->ranges.start, ctx->ranges.end, ctx->filesize, mine, ctx->ranges.end - ctx->ranges.start + 1, ctx->keepalive ? "keep-alive" : "close");
+							ctx->sendBuf->buf = ctx->buf;
+							ctx->sendBuf->len = (ULONG)res;
+							WSASend(ctx->client, ctx->sendBuf, 1, NULL, 0, &ctx->sendOL, NULL);
+							ctx->state = State::ReadStaticFile;
+							*reinterpret_cast<UINT64*>(&ctx->recvOL.Offset) = ctx->ranges.start;
+							ctx->filesize = ctx->ranges.end + 1;
+							break;
+						}
+					}
+				}
+			}
+			else {
+				int res = snprintf(ctx->buf, sizeof(ctx->buf),
+					"HTTP/1.1 204 No Content\r\n\r\n");
+				ctx->sendBuf->buf = ctx->buf;
+				ctx->sendBuf->len = (ULONG)res;
+				WSASend(ctx->client, ctx->sendBuf, 1, NULL, 0, &ctx->sendOL, NULL);
+				ctx->state = State::RecvNextRequest;
+				break;
+			}
 			int res = snprintf(ctx->buf, sizeof(ctx->buf),
 				"HTTP/1.1 200 OK\r\n"
 				"Content-Type: %s\r\n"
 				"Content-Length: %lld\r\n"
-				"Connection: %s\r\n\r\n", mine, fsize.QuadPart, ctx->keepalive ? "keep-alive" : "close");
+				"Connection: %s\r\n\r\n", mine, ctx->filesize, ctx->keepalive ? "keep-alive" : "close");
 			assert(res > 0);
 			ctx->sendBuf->buf = ctx->buf;
 			ctx->sendBuf->len = (ULONG)res;
@@ -350,7 +440,6 @@ void processRequest(IOCP* ctx, DWORD dwbytes) {
 					if (ws_key != ctx->p.headers.end()) {
 						ctx->dir = URIComponentToWideChar(pro->second.data());
 						if (ctx->dir != NULL) {
-							printf("ctx->dir=%ls\n", ctx->dir);
 							ctx->state = State::AfterHandShake;
 							ws_key->second += "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 							char buf[29];
