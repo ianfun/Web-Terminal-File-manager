@@ -1,0 +1,3 @@
+[submodule "src/linux/sha1"]
+	path = src/linux/sha1
+	url = https://github.com/clibs/sha1.git
