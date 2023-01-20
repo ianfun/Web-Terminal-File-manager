@@ -232,7 +232,7 @@ function fDeleteRecursively(target) {
                     alert(x.response || "The file to delete is not found.");
                     break;
                 default:
-                    console.log("invalid status code", x.status);
+                    console.error("invalid status code", x.status);
             }
         }
     };
@@ -263,7 +263,7 @@ function fDelete() {
                     alert("Delete " + x.target.innerText + " failed.Some un-defined error happened.");
                     break;
                 default:
-                    console.log("invalid status code", x.status);
+                    console.error("invalid status code", x.status);
             }
         }
     };
@@ -299,7 +299,7 @@ function fRename() {
                         alert("Error when rename " + x.oldname + " to " + x.newname);
                         break;
                     default:
-                        console.log("invalid status code", x.status);
+                        console.error("invalid status code", x.status);
                 }
             }
         };
@@ -327,10 +327,8 @@ function fsubmit(e) {
         outer.appendChild(progress);
         upload.appendChild(outer);
         x.upload.onprogress = (e) => {
-            if (e.lengthComputable) {
+            if (e.lengthComputable) 
                 progress.style.width = ~~((e.loaded / e.total) * 150) + 'px';
-                console.log(progress.style.width);
-            }
         };
         x.onloadend = (e) => {
             upload.removeChild(outer);
