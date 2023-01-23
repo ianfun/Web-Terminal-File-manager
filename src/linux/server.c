@@ -63,6 +63,16 @@ static int http_on_header_field(llhttp_t* parser, const char* at, size_t length)
       self->flags |= 4;
     }
   }
+  if (length == 17) {
+    if (strncasecmp(at, "sec-websocket-key", 17) == 0) {
+      self->flags |= 8;
+    }
+  }
+  if (length == 22) {
+    if (strncasecmp(at, "sec-webSocket-protocol", 22) == 0) {
+      self->flags |= 16;
+    }
+  }
   return 0;
 }
 static int http_on_header_value(llhttp_t* parser, const char* at, size_t length) {
@@ -71,6 +81,19 @@ static int http_on_header_value(llhttp_t* parser, const char* at, size_t length)
     self->h_newname = malloc(length + 1);
     memcpy(self->h_newname, at, length);
     self->h_newname[length] = '\0';
+    self->flags &= ~4;
+  } else if (self->flags & 8) {
+    const char *magic = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+    char *mdata = (char*)malloc((self->ws_len = 36 + length));
+    memcpy(mdata, at, length);
+    strcpy(mdata + length, magic);
+    self->sec_ws_key = mdata;
+    self->flags &= ~8;
+  } else if ((self->flags & 16) && length < 256) {
+    self->ws_pro = malloc(length + 1);
+    memcpy(self->ws_pro, at, length);
+    self->ws_pro[length] = '\0';
+    self->flags &= ~16;
   }
   return 0;
 }
@@ -373,6 +396,211 @@ RE_PARSE: ;
         lazy_buffer_destroy(&mc->lzb);
         goto RE_PARSE;
     }
+    case ss_ws_read6:
+    {
+        unsigned char opcode, *data, *precv;
+        uint64_t len, offset;
+        struct io_uring_sqe *sqe;
+        struct my_client_http *mc = (struct my_client_http*)self;
+        if (cqe->res != 6) {
+          my_delete_client_http(mc);
+          break;
+        }
+        data = (unsigned char*)mc->read_buffer;
+        opcode = *data;
+        if ((!(opcode & 0b10000000)) || (data[1] & 0b01110000)) {
+          my_delete_client_http(mc);
+          break;
+        }
+        opcode &= 0b00001111;
+        mc->pfds[1] = opcode;
+        len = data[1] & 0b01111111;
+        switch (len) {
+        case 126:
+          len = ((unsigned long long)data[2] << 8) | (unsigned long long)data[3];
+          offset = 2;
+          data[0] = data[4];
+          data[1] = data[5];
+          precv = data + 2;
+          break;
+        case 127:
+        {
+          uint64_t x = *(uint64_t*)data + 2;
+          offset = 8;
+          len = ntohll(x);
+          precv = data + 0;
+          break;
+        }
+        default:
+          offset = 0;
+          data[0] = data[2];
+          data[1] = data[3];
+          data[2] = data[4];
+          data[3] = data[5];
+          precv = data + 4;
+          break;
+        }
+        if (len == 0) {
+          sqe = io_uring_get_sqe(&my_ring);
+          io_uring_sqe_set_data(sqe, mc);
+          io_uring_prep_recv(sqe, self->fd, mc->read_buffer, 6, MSG_WAITALL);
+          io_uring_submit(&my_ring);
+          break;
+        }
+        if (len + 6 > sizeof(mc->read_buffer)) {
+          my_delete_client_http(mc);
+          break;
+        }
+        mc->http_reader.ws_len = len;
+        mc->base.so_type = ss_ws_read_data;
+        sqe = io_uring_get_sqe(&my_ring);
+        io_uring_sqe_set_data(sqe, mc);
+        io_uring_prep_recv(sqe, self->fd, precv, len + offset, MSG_WAITALL);
+        io_uring_submit(&my_ring);
+        break;
+    }
+    case ss_ws_read_data:
+    {
+        struct io_uring_sqe *sqe;
+        unsigned char *mask, *payload;
+        unsigned len;
+        struct my_client_http *mc = (struct my_client_http*)self;
+        if (cqe->res <= 0) {
+          my_delete_client_http(mc);
+          break;
+        }
+        len = mc->http_reader.ws_len;
+        mask = (unsigned char*)mc->read_buffer;
+        payload = mask + 4;
+        for (size_t i = 0; i < (size_t)mc->http_reader.ws_len; ++i)
+          payload[i] = payload[i] ^ mask[i % 4];
+        switch (mc->pfds[1]) {
+        case 1: /* Text */
+        case 2: /* Binary */
+          if (!*payload && len == 5) {
+            struct winsize win_size;
+            memset(&win_size, 0, sizeof win_size);
+            win_size.ws_row = (payload[2] << 8) | payload[1];
+            win_size.ws_col = (payload[4] << 8) | payload[3];
+            printf("resize (%d, %d)\n", win_size.ws_row, win_size.ws_col);
+            ioctl(mc->fileid, TIOCSWINSZ, &win_size);
+          } else {
+            ssize_t res = write(mc->fileid, payload, len);
+            if (res < 0) {
+              my_error("write()");
+              my_delete_client_http(mc);
+              break;
+            }
+          }
+          sqe = io_uring_get_sqe(&my_ring);
+          io_uring_sqe_set_data(sqe, mc);
+          io_uring_prep_recv(sqe, mc->base.fd, mc->read_buffer, 6, MSG_WAITALL);
+          io_uring_submit(&my_ring);
+          mc->base.so_type = ss_ws_read6;
+          break;
+        case 8: /* Close */
+          my_delete_client_http(mc);
+          break;
+        default: 
+          my_delete_client_http(mc);
+          break;
+        }
+      break;
+    }
+    case ss_ws_read_pty:
+    {
+      struct io_uring_sqe *sqe;
+      size_t hsize = 2;
+      const size_t length = cqe->res;
+      struct my_client_ws *ws = (struct my_client_ws*)self;
+      if (cqe->res <= 0) {
+        printf("ss_ws_read_pty: %s\n", strerror(-cqe->res));
+        my_delete_client_http(ws->mc);
+        break;
+      }
+      ws->header[0] = (unsigned char)(0b10000000 | 2);
+      if (length < 126) {
+        ws->header[1] = (unsigned char)length;
+      }
+      else if (length < 0b10000000000000000) {
+        hsize += 2;
+        ws->header[1] = 126;
+        ws->header[2] = (unsigned char)(length >> 8);
+        ws->header[3] = (unsigned char)length;
+      }
+      else {
+        return;
+      }
+
+      ws->base.so_type = ss_ws_send_data;
+      sqe = io_uring_get_sqe(&my_ring);
+      io_uring_sqe_set_data(sqe, ws);
+      ws->vecs[0].iov_base = (char*)ws->header;
+      ws->vecs[0].iov_len = hsize;
+      ws->vecs[1].iov_base = ws->buffer;
+      ws->vecs[1].iov_len = length;
+      io_uring_prep_writev(sqe, ws->mc->base.fd, ws->vecs, 2, -1);
+      io_uring_submit(&my_ring);
+      break;
+    }
+    case ss_ws_send_data:
+    {
+      struct io_uring_sqe *sqe;
+      struct my_client_ws *ws = (struct my_client_ws*)self;
+      if (cqe->res <= 0) {
+        my_delete_client_http(ws->mc);
+        break;
+      }
+      sqe = io_uring_get_sqe(&my_ring);
+      io_uring_sqe_set_data(sqe, ws);
+      io_uring_prep_read(sqe, ws->base.fd, ws->buffer, sizeof(ws->buffer), -1);
+      ws->base.so_type = ss_ws_read_pty;
+      io_uring_submit(&my_ring);
+      break;
+    }
+    case ss_ws_open:
+    {
+      struct winsize win_size = {24, 80, 0, 0};
+      struct io_uring_sqe *sqe;
+      struct my_client_ws *ws_ptr;
+      struct my_client_http *mc = (struct my_client_http*)self;
+      if (cqe->res <= 0) {
+        my_delete_client_http(mc);
+        break;
+      }
+      char *q = strchr(mc->http_reader.url_str, '?');
+
+      if (q++)
+        sscanf(q, "rows=%hu&cols=%hu", &win_size.ws_row, &win_size.ws_col);
+
+      mc->filesize = forkpty(&mc->fileid, NULL, &term_attrs, &win_size);
+
+      if (mc->filesize < 0) {
+        my_error("forkpty");
+        my_delete_client_http(mc);
+        break;
+      }
+      if (!mc->filesize) {
+        setsid();
+        execlp(my_shell, my_shell, NULL);
+        abort();
+      }
+      mc->lzb.data = (char*)(ws_ptr = (struct my_client_ws *)malloc(sizeof(struct my_client_ws)));
+      ws_ptr->mc = mc;
+
+      sqe = io_uring_get_sqe(&my_ring);
+      io_uring_sqe_set_data(sqe, ws_ptr);
+      io_uring_prep_read(sqe, (ws_ptr->base.fd = mc->fileid), ws_ptr->buffer, sizeof(ws_ptr->buffer), -1);
+      ws_ptr->base.so_type = ss_ws_read_pty;
+
+      sqe = io_uring_get_sqe(&my_ring);
+      io_uring_sqe_set_data(sqe, mc);
+      io_uring_prep_recv(sqe, self->fd, mc->read_buffer, 6, MSG_WAITALL);
+      mc->base.so_type = ss_ws_read6;
+
+      io_uring_submit(&my_ring);
+      break;
+    }
     case ss_recv_header:
     {
         struct my_client_http *mc = (struct my_client_http*)self;
@@ -384,6 +612,35 @@ RE_PARSE: ;
           http_reader_start(&mc->http_reader);
         llhttp_errno_t err = llhttp_execute(&mc->http_reader.parser, mc->read_buffer, cqe->res);
         if (err != HPE_OK) {
+          if (err == HPE_PAUSED_UPGRADE) {
+            unsigned char *key = (unsigned char*)mc->http_reader.sec_ws_key, *pro = (unsigned char*)mc->http_reader.ws_pro;
+            if (key && pro) {
+                uint8_t results[20], base64[29];
+                SHA1_CTX sha;
+                int len;
+
+                SHA1Init(&sha);
+                SHA1Update(&sha, key, mc->http_reader.ws_len);
+                SHA1Final(results, &sha);
+
+                free(key);
+                mc->http_reader.sec_ws_key = NULL;
+
+                base64_encode((const unsigned char*)results, (unsigned char*)base64);
+
+                len = sprintf(mc->read_buffer, "%s%s%s%s%s",
+"HTTP/1.1 101 Switching Protocols\r\n"
+"Connection: Upgrade\r\n"
+"Upgrade: WebSocket\r\n"
+"Sec-WebSocket-Protocol: ", pro, "\r\n"
+"Sec-WebSocket-Accept: ", base64, "\r\n"
+"\r\n");
+                free(pro);
+                mc->http_reader.ws_pro = NULL;
+                my_send_header_once(mc, mc->read_buffer, len, ss_ws_open);
+                break;
+            }
+          }
           printf("[llhttp parse error] code=%s, reason=%s\n", llhttp_errno_name(err), mc->http_reader.parser.reason);
           my_delete_client_http(mc);
           break;
@@ -537,7 +794,7 @@ static void my_signal_handler(int sig) {
 }
 static void display_useage(const char *hint) {
   const char *useage = "A HTTP+WebSocket server(io_uring)\nUsage: [ip] [port] [directory]\n\n  For example: ./server 0.0.0.0 8000 ./public\n\n";
-  write(STDERR_FILENO, useage, strlen(useage));
+  (void)write(STDERR_FILENO, useage, strlen(useage));
   my_error(hint);
   my_exitcode = 1;
 }
@@ -603,6 +860,13 @@ static void my_init(int argc, const char *argv[]) {
     sigaction(SIGINT, &sh, NULL);
   }
   my_accept_start();
+
+  my_shell = getenv("SHELL");
+  if (!my_shell)
+    my_shell = MY_DEFAULT_SHELL;
+  if (tcgetattr(STDIN_FILENO, &term_attrs)) 
+    my_fatal("tcgetattr()");
+
   printf("[server start] url=http://%s:%s\n", ip4, port);
 }
 int main(int argc, const char *argv[]) {

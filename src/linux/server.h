@@ -14,6 +14,8 @@
 #include <fcntl.h>
 #include <netdb.h>
 #include <dirent.h>
+#include <termios.h>
+#include <pty.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/eventfd.h>
@@ -25,6 +27,7 @@
 
 #include "liburing.h"
 #include "llhttp.h"
+#include "sha1.h"
 
 #define SERVER_PORT 8000
 #define QUEUE_INIT 4
@@ -35,9 +38,13 @@
 #define RECV_BUFFER_SIZE 1024
 #define MY_INDEX "index.html" 
 #define MY_INDEX_MINE "text/html; charset=utf-8"
+#define MY_DEFAULT_SHELL "bash"
+#define PTY_READ_SIZE 512
 
+static const char *my_shell;
 static struct io_uring my_ring;
 static int my_exitcode;
+static struct termios term_attrs;
 struct lazy_buffer {
   size_t length, cap;
   char *data;
@@ -84,9 +91,12 @@ enum client_state {
   ss_readdir,
   ss_reparse, // after call send() to send http responce(header+body), and ready to re-use(keep-alive) the socket.
   ss_reparse2,
-  ss_ws_handshake, // after call send() to send Sec-WebSocket-Key, ...etc.
-  ss_ws_read6, // after call recv() to recv websocket frame (first 6 bytes).
-  ss_ws_write, // after call send() to send websocket frame.
+  ss_ws_open,
+  ss_ws_read_data,
+  ss_ws_read6,
+  ss_ws_read_pty,
+  ss_ws_send_data,
+  ss_ws_write,
   ss_shutdown  // after call shutdown() to shutdown connection.
 };
 struct my_client {
@@ -105,8 +115,16 @@ static struct my_shutdowner {
 struct http_reader {
   llhttp_t parser;
   llhttp_settings_t settings;
-  char *url_str, *h_newname;
+  char *url_str, *h_newname, *sec_ws_key, *ws_pro;
+  unsigned ws_len;
   unsigned char flags;
+};
+struct my_client_ws {
+  struct my_client base;
+  struct my_client_http *mc;
+  unsigned char header[4];
+  struct iovec vecs[2];
+  char buffer[PTY_READ_SIZE];
 };
 struct my_client_http {
   struct my_client base;
@@ -116,7 +134,6 @@ struct my_client_http {
   off_t filesize;
   struct http_reader http_reader;
   struct lazy_buffer lzb;
-  struct iovec io_vecs[2];
 };
 struct linux_dirent {
     unsigned long  d_ino;
@@ -149,3 +166,53 @@ static void my_fatal(const char *msg);
 #define FILE_ATTRIBUTE_NORMAL  0x00000080
 #define FILE_ATTRIBUTE_TEMPORARY  0x00000100
 #define FILE_ATTRIBUTE_COMPRESSED  0x00000800
+
+static const unsigned char base64_table[65] =
+  "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+/*
+* Base64 encoding/decoding (RFC1341)
+* Copyright (c) 2005-2011, Jouni Malinen <j@w1.fi>
+*
+* This software may be distributed under the terms of the BSD license.
+* See README for more details.
+*/
+
+// 2023-1-17 - Some custom edits.
+
+void base64_encode(const unsigned char *src, unsigned char *out)
+{
+  unsigned char *pos;
+  const unsigned char *end, *in;
+
+  end = src + 20;
+  in = src;
+  pos = out;
+  while (end - in >= 3) {
+    *pos++ = base64_table[in[0] >> 2];
+    *pos++ = base64_table[((in[0] & 0x03) << 4) | (in[1] >> 4)];
+    *pos++ = base64_table[((in[1] & 0x0f) << 2) | (in[2] >> 6)];
+    *pos++ = base64_table[in[2] & 0x3f];
+    in += 3;
+  }
+
+  if (end - in) {
+    *pos++ = base64_table[in[0] >> 2];
+    if (end - in == 1) {
+      *pos++ = base64_table[(in[0] & 0x03) << 4];
+      *pos++ = '=';
+    } else {
+      *pos++ = base64_table[((in[0] & 0x03) << 4) |
+                (in[1] >> 4)];
+      *pos++ = base64_table[(in[1] & 0x0f) << 2];
+    }
+    *pos++ = '=';
+  }
+
+  *pos = '\0';
+}
+static uint64_t ntohll(uint64_t x) {
+  uint64_t H = ntohl(x);
+  uint64_t L = ntohl(x >> 32);
+  return (H << 32) + L;
+}

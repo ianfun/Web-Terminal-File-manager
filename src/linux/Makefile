@@ -1,11 +1,11 @@
 CC=clang
 LLHTTP_OPTS=-Os -g3 -Wall -Wextra -Wno-unused-parameter
-SERVER_OPTS=-Os -g3 -Wall -Wextra -Wno-unused-parameter -luring
+SERVER_OPTS=-Os -g3 -Wall -Wextra -Wno-unused-parameter
 
 build:
-	$(CC) $(SERVER_OPTS) server.c api.o http.o llhttp.o -o server
+	$(CC) $(SERVER_OPTS) server.c api.o http.o llhttp.o sha1.o -o server -luring -lutil
 run:
-	./server
+	./server 0.0.0.0 8000 ./static
 clean:
 	rm server *.o
 llhttp:
