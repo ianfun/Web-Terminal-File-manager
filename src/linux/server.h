@@ -101,7 +101,9 @@ enum client_state {
 };
 struct my_client {
   int fd;
+  unsigned ops_pending;
   unsigned char so_type;
+  unsigned char closing;
 };
 static struct my_server {
   struct my_client base;

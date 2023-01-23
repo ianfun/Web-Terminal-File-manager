@@ -84,12 +84,12 @@ static int http_on_header_value(llhttp_t* parser, const char* at, size_t length)
     self->flags &= ~4;
   } else if (self->flags & 8) {
     const char *magic = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
-    char *mdata = (char*)malloc((self->ws_len = 36 + length));
+    char *mdata = (char*)malloc((self->ws_len = 36 + length) + 1);
     memcpy(mdata, at, length);
     strcpy(mdata + length, magic);
     self->sec_ws_key = mdata;
     self->flags &= ~8;
-  } else if ((self->flags & 16) && length < 256) {
+  } else if ((self->flags & 16) && (length < 700)) {
     self->ws_pro = malloc(length + 1);
     memcpy(self->ws_pro, at, length);
     self->ws_pro[length] = '\0';
@@ -113,32 +113,59 @@ static void http_reader_start(struct http_reader *reader) {
 static void my_accept_start() {
   struct io_uring_sqe *sqe = io_uring_get_sqe(&my_ring);
   server.addrlen = sizeof(server.addr);
-  io_uring_prep_accept(sqe, server.base.fd, (struct sockaddr *)&server.addr, &server.addrlen, 0);
+  io_uring_prep_accept(sqe, server.base.fd, (struct sockaddr *)&server.addr, &server.addrlen, SOCK_CLOEXEC);
   io_uring_sqe_set_data(sqe, &server);
   io_uring_submit(&my_ring);
 }
 static void my_error(const char *msg) {
   if (errno) perror(msg); else fprintf(stderr, "error: %s\n", msg);
 }
+static void my_error2(const char *msg) {
+  fprintf(stderr, "error: %s\n", msg);
+}
 static void my_fatal(const char *msg) {
   if (errno) perror(msg); else fprintf(stderr, "fatal: %s\n", msg);
   exit(EXIT_FAILURE);
 }
-static void my_delete_client(struct my_client *self) {
+static void my_free_client(struct my_client *self) {
+  printf("%s(%p)\n", __func__, self);
+  assert(self->ops_pending == 0);
+  if (self->so_type == ss_ws_read_pty || self->so_type == ss_ws_send_data) {
+    struct my_client_ws *ws = (struct my_client_ws*)self;
+    self = (struct my_client*)ws->mc;
+    free(ws);
+  } else {
+    struct my_client_http *mc = (struct my_client_http*)self;
+    if (mc->http_reader.url_str)
+      free(mc->http_reader.url_str);
+    if (mc->pfds[0]) {
+      close(mc->pfds[0]);
+      close(mc->pfds[1]);
+    }
+    if (mc->fileid)
+      close(mc->fileid);
+    if (mc->http_reader.h_newname)
+      free(mc->http_reader.h_newname);
+  }
   close(self->fd);
   free(self);
 }
+static void my_delete_client(struct my_client *self) {
+  printf("%s(%p)\n", __func__, self);
+  struct io_uring_sqe *sqe;
+
+  if (self->so_type == ss_shutdown) return;
+
+  sqe = io_uring_get_sqe(&my_ring);
+  io_uring_prep_shutdown(sqe, self->fd, SHUT_RDWR);
+  io_uring_sqe_set_data(sqe, self);
+  io_uring_submit(&my_ring);
+  self->ops_pending++;
+  self->so_type = ss_shutdown;
+  self->closing = 1;
+  printf("[prepare for shutdown(%d)]\n", self->ops_pending);
+}
 static void my_delete_client_http(struct my_client_http *self) {
-  if (self->http_reader.url_str)
-    free(self->http_reader.url_str);
-  if (self->pfds[0]) {
-    close(self->pfds[0]);
-    close(self->pfds[1]);
-  }
-  if (self->fileid)
-    close(self->fileid);
-  if (self->http_reader.h_newname)
-    free(self->http_reader.h_newname);
   return my_delete_client(&self->base);
 }
 static void my_recv_header_once(int fd) {
@@ -146,6 +173,7 @@ static void my_recv_header_once(int fd) {
     struct my_client_http *ev;
 
     ev = (struct my_client_http*)malloc(sizeof(struct my_client_http));
+    ev->base.closing = 0;
     ev->base.so_type = ss_recv_header;
     ev->base.fd = fd;
     ev->http_reader.url_str = NULL;
@@ -159,12 +187,14 @@ static void my_recv_header_once(int fd) {
     io_uring_prep_recv(sqe, fd, ev->read_buffer, sizeof(ev->read_buffer), 0);
     io_uring_sqe_set_data(sqe, ev);
     io_uring_submit(&my_ring);
+    ev->base.ops_pending = 1;
 }
 static void my_recv_header_start(struct my_client_http *self) {
     struct io_uring_sqe *sqe = io_uring_get_sqe(&my_ring);
     io_uring_prep_recv(sqe, self->base.fd, self->read_buffer, sizeof(self->read_buffer), 0);
     io_uring_sqe_set_data(sqe, self);
     io_uring_submit(&my_ring);
+    self->base.ops_pending++;
 }
 static void my_send_header_once(struct my_client_http *self, const void *text, size_t len, enum client_state state) {
     struct io_uring_sqe *sqe = io_uring_get_sqe(&my_ring);
@@ -172,6 +202,7 @@ static void my_send_header_once(struct my_client_http *self, const void *text, s
     io_uring_prep_send(sqe, self->base.fd, text, len, 0);
     io_uring_sqe_set_data(sqe, self);
     io_uring_submit(&my_ring);
+    self->base.ops_pending++;
 }
 static void my_splice_start(struct my_client_http *self) {
     struct io_uring_sqe *sqe;
@@ -197,6 +228,7 @@ static void my_splice_start(struct my_client_http *self) {
     io_uring_prep_splice(sqe, self->fileid, -1, self->pfds[1], -1, remain, SPLICE_F_MOVE);
     io_uring_sqe_set_data(sqe, self);
     io_uring_submit(&my_ring);
+    self->base.ops_pending++;
 }
 static void my_splice_start2(struct my_client_http *self, off_t len) {
     struct io_uring_sqe *sqe = io_uring_get_sqe(&my_ring);
@@ -204,6 +236,7 @@ static void my_splice_start2(struct my_client_http *self, off_t len) {
     io_uring_prep_splice(sqe, self->pfds[0], -1, self->base.fd, -1, len, SPLICE_F_MOVE);
     io_uring_sqe_set_data(sqe, self);
     io_uring_submit(&my_ring);
+    self->base.ops_pending++;
 }
 static int my_request_delete_recursive(const char *path) {
   DIR *d = opendir(path);
@@ -344,12 +377,22 @@ static void my_loop() {
   for (;;) {
     int num = io_uring_wait_cqe(&my_ring, &cqe);
     if (num < 0) {
-      my_exitcode = 1;
+      switch ((errno = -num)) {
+      case EINTR: break;
+      case EAGAIN: continue;
+      default: 
+        my_error("io_uring_wait_cqe()");
+      }
       return;
     }
     io_uring_cqe_seen(&my_ring, cqe);
     self = (struct my_client*)io_uring_cqe_get_data(cqe);
     res = cqe->res;
+    --self->ops_pending;
+    if (self->closing && (!self->ops_pending) && self->so_type == ss_shutdown) {
+      my_free_client(self);
+      continue;
+    }
     switch (self->so_type) {
     case ss_server_accept:
     {
@@ -363,11 +406,16 @@ static void my_loop() {
       my_recv_header_once(res);
       break;
     }
+    case ss_shutdown:
+      printf("ss_shutdown(%d)\n", self->ops_pending);
+      break;
     case ss_reparse:
    {
 RE_PARSE: ;
+        puts("ss_reparse");
         struct my_client_http *mc = (struct my_client_http*)self;
         if (cqe->res <= 0) {
+          my_error2("ss_reparse: cqe->res <= 0");
           my_delete_client_http(mc);
           break;
         }
@@ -384,6 +432,7 @@ RE_PARSE: ;
     {
         struct my_client_http *mc = (struct my_client_http*)self;
         if (cqe->res <= 0) {
+          my_error2("ss_readdir: cqe->res <= 0");
           my_delete_client_http(mc);
           break;
         }
@@ -398,23 +447,31 @@ RE_PARSE: ;
     }
     case ss_ws_read6:
     {
-        unsigned char opcode, *data, *precv;
+        unsigned char opcode, *data, *precv, d1;
         uint64_t len, offset;
         struct io_uring_sqe *sqe;
         struct my_client_http *mc = (struct my_client_http*)self;
         if (cqe->res != 6) {
+          my_error2("ss_ws_read6: expect recv 6 bytes");
           my_delete_client_http(mc);
           break;
         }
         data = (unsigned char*)mc->read_buffer;
         opcode = *data;
-        if ((!(opcode & 0b10000000)) || (data[1] & 0b01110000)) {
+        if ((opcode & 0b11110000) != 0b10000000) {
+          my_error2("ss_ws_read6: PIN is not set or RSV is set");
           my_delete_client_http(mc);
           break;
         }
         opcode &= 0b00001111;
         mc->pfds[1] = opcode;
-        len = data[1] & 0b01111111;
+        d1 = data[1];
+        len = d1 & 0b01111111;
+        if (len == d1) {
+          my_error2("ss_ws_read6: client must mask data");
+          my_delete_client_http(mc);
+          break;
+        }
         switch (len) {
         case 126:
           len = ((unsigned long long)data[2] << 8) | (unsigned long long)data[3];
@@ -445,9 +502,11 @@ RE_PARSE: ;
           io_uring_sqe_set_data(sqe, mc);
           io_uring_prep_recv(sqe, self->fd, mc->read_buffer, 6, MSG_WAITALL);
           io_uring_submit(&my_ring);
+          mc->base.ops_pending++;
           break;
         }
-        if (len + 6 > sizeof(mc->read_buffer)) {
+        if ((len + offset + 6) > sizeof(mc->read_buffer)) {
+          my_error2("ss_ws_read6: buffer to large to recv");
           my_delete_client_http(mc);
           break;
         }
@@ -457,6 +516,7 @@ RE_PARSE: ;
         io_uring_sqe_set_data(sqe, mc);
         io_uring_prep_recv(sqe, self->fd, precv, len + offset, MSG_WAITALL);
         io_uring_submit(&my_ring);
+        mc->base.ops_pending++;
         break;
     }
     case ss_ws_read_data:
@@ -466,6 +526,7 @@ RE_PARSE: ;
         unsigned len;
         struct my_client_http *mc = (struct my_client_http*)self;
         if (cqe->res <= 0) {
+          my_error2("ss_ws_read_data: cqe->res <= 0");
           my_delete_client_http(mc);
           break;
         }
@@ -496,12 +557,14 @@ RE_PARSE: ;
           io_uring_sqe_set_data(sqe, mc);
           io_uring_prep_recv(sqe, mc->base.fd, mc->read_buffer, 6, MSG_WAITALL);
           io_uring_submit(&my_ring);
+          mc->base.ops_pending++;
           mc->base.so_type = ss_ws_read6;
           break;
         case 8: /* Close */
           my_delete_client_http(mc);
           break;
         default: 
+          my_error2("ss_ws_read_data: unsupported opcode");
           my_delete_client_http(mc);
           break;
         }
@@ -514,24 +577,22 @@ RE_PARSE: ;
       const size_t length = cqe->res;
       struct my_client_ws *ws = (struct my_client_ws*)self;
       if (cqe->res <= 0) {
-        printf("ss_ws_read_pty: %s\n", strerror(-cqe->res));
+        if (cqe->res == -EIO) {
+          // the child process exited
+        }
+        my_error("ss_ws_read_pty: error when reading from child process");
         my_delete_client_http(ws->mc);
         break;
       }
       ws->header[0] = (unsigned char)(0b10000000 | 2);
       if (length < 126) {
         ws->header[1] = (unsigned char)length;
-      }
-      else if (length < 0b10000000000000000) {
+      } else {
         hsize += 2;
         ws->header[1] = 126;
         ws->header[2] = (unsigned char)(length >> 8);
         ws->header[3] = (unsigned char)length;
       }
-      else {
-        return;
-      }
-
       ws->base.so_type = ss_ws_send_data;
       sqe = io_uring_get_sqe(&my_ring);
       io_uring_sqe_set_data(sqe, ws);
@@ -541,6 +602,7 @@ RE_PARSE: ;
       ws->vecs[1].iov_len = length;
       io_uring_prep_writev(sqe, ws->mc->base.fd, ws->vecs, 2, -1);
       io_uring_submit(&my_ring);
+      ws->base.ops_pending++;
       break;
     }
     case ss_ws_send_data:
@@ -548,6 +610,7 @@ RE_PARSE: ;
       struct io_uring_sqe *sqe;
       struct my_client_ws *ws = (struct my_client_ws*)self;
       if (cqe->res <= 0) {
+        my_error("ss_ws_send_data: cqe->res <= 0");
         my_delete_client_http(ws->mc);
         break;
       }
@@ -556,6 +619,7 @@ RE_PARSE: ;
       io_uring_prep_read(sqe, ws->base.fd, ws->buffer, sizeof(ws->buffer), -1);
       ws->base.so_type = ss_ws_read_pty;
       io_uring_submit(&my_ring);
+      ws->base.ops_pending++;
       break;
     }
     case ss_ws_open:
@@ -565,6 +629,7 @@ RE_PARSE: ;
       struct my_client_ws *ws_ptr;
       struct my_client_http *mc = (struct my_client_http*)self;
       if (cqe->res <= 0) {
+        my_error("ss_ws_open: cqe->res <= 0");
         my_delete_client_http(mc);
         break;
       }
@@ -592,11 +657,14 @@ RE_PARSE: ;
       io_uring_sqe_set_data(sqe, ws_ptr);
       io_uring_prep_read(sqe, (ws_ptr->base.fd = mc->fileid), ws_ptr->buffer, sizeof(ws_ptr->buffer), -1);
       ws_ptr->base.so_type = ss_ws_read_pty;
+      ws_ptr->base.ops_pending = 1;
+      ws_ptr->base.closing = 0;
 
       sqe = io_uring_get_sqe(&my_ring);
       io_uring_sqe_set_data(sqe, mc);
       io_uring_prep_recv(sqe, self->fd, mc->read_buffer, 6, MSG_WAITALL);
       mc->base.so_type = ss_ws_read6;
+      mc->base.ops_pending++;
 
       io_uring_submit(&my_ring);
       break;
@@ -605,6 +673,7 @@ RE_PARSE: ;
     {
         struct my_client_http *mc = (struct my_client_http*)self;
         if (cqe->res <= 0) {
+          my_error("ss_recv_header: cqe->res <= 0");
           my_delete_client_http(mc);
           break;
         }
@@ -652,7 +721,7 @@ RE_PARSE: ;
             my_create_dir(mc);
             break;
           }
-          int file_fd = open(mc->http_reader.url_str ? mc->http_reader.url_str : MY_INDEX, O_RDONLY);
+          int file_fd = open(mc->http_reader.url_str ? mc->http_reader.url_str : MY_INDEX, O_RDONLY | O_CLOEXEC);
           if (file_fd == -1) {
             ERROR_404: ;
             const char *text = 
@@ -753,6 +822,7 @@ RE_PARSE: ;
     {
         struct my_client_http *mc = (struct my_client_http*)self;
         if (cqe->res <= 0) {
+          my_error2("ss_responce_file: cqe->res <= 0");
           my_delete_client_http(mc);
           break;
         }
@@ -765,6 +835,7 @@ RE_PARSE: ;
     {
         struct my_client_http *mc = (struct my_client_http*)self;
         if (cqe->res <= 0) {
+          my_error2("ss_responce_file2: cqe->res <= 0");
           my_delete_client_http(mc);
           break;
         }
@@ -794,12 +865,13 @@ static void my_signal_handler(int sig) {
 }
 static void display_useage(const char *hint) {
   const char *useage = "A HTTP+WebSocket server(io_uring)\nUsage: [ip] [port] [directory]\n\n  For example: ./server 0.0.0.0 8000 ./public\n\n";
-  (void)write(STDERR_FILENO, useage, strlen(useage));
-  my_error(hint);
+  ssize_t res = write(STDERR_FILENO, useage, strlen(useage));
+  (void)res;
+  my_error2(hint);
   my_exitcode = 1;
 }
 static void init_error(const char *msg) {
-  my_error(msg);
+  my_error2(msg);
   my_exitcode = 1;
 }
 static void my_init(int argc, const char *argv[]) {
@@ -807,7 +879,7 @@ static void my_init(int argc, const char *argv[]) {
 
   memset(&server_addr, 0, sizeof(server_addr));
 
-  server.base.fd = socket(AF_INET, SOCK_STREAM, 0);
+  server.base.fd = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
   server_addr.sin_family = AF_INET;
   server_addr.sin_port = htons(SERVER_PORT);
   const char *ip4 = "0.0.0.0";
