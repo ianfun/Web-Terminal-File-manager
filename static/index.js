@@ -1,52 +1,33 @@
 const command = 0;
-
-var div = document.body.firstElementChild;
 var terminal = new Terminal({
-    fontFamily: "Inconsolata, 'Source Code Pro', 'monospace', 'Consolas'",
+    fontFamily:  "'Ubuntu Mono', 'Inconsolata', 'Source Code Pro', 'monospace', 'Consolas'",
     cursorBlink: true,
     scrollback: 1000,
     windowsMode: true,
     bellStyle: "sound",
     tabStopWidth: 10
 });
-
-terminal.open(div);
-
+terminal.open(document.body.firstElementChild);
 const fitAddon = new FitAddon.FitAddon();
 terminal.loadAddon(fitAddon);
 fitAddon.fit();
-
-terminal.onData((e) => {
-    ws.send(e);
-});
+terminal.onData(function (e) { ws.send(e); } );
 dir = sessionStorage.getItem("shell-dir");
-if (dir) {
+if (dir)
     sessionStorage.removeItem("shell-dir");
-} else {
+else 
     dir = ".";
-}
-
 var ws = new WebSocket('ws://' + location.host + '?rows=' + terminal.rows + '&cols=' + terminal.cols + "&cmd=" + command.toString(), [encodeURIComponent(dir)]);
 var oldy = terminal.rows;
 var oldx = terminal.cols;
 ws.onopen = () => {
-    terminal.write('* * * connection established * * *\r\n');
-    ws.onmessage = (m) => {
+    ws.onmessage = function(m) {
         m.data.startsWith && terminal.write(m.data);
         m.data.text && m.data.text().then((t) => {
             terminal.write(t);
         });
     };
-    ws.onclose = e => {
-        /*
-        if (e.reason != '') {
-            terminal.write("\r\n* * * connection closed * * *\r\n" + e.reason);
-        }
-        else {
-            terminal.write('\r\n* * *connection closed...* * *\r\n');
-        }*/
-        window.close();
-    };
+    ws.onclose = function() {window.close()};
     terminal.focus();
 };
 window.onresize = function () {
@@ -63,7 +44,8 @@ window.onresize = function () {
     }
 }
 ws.onerror = console.error;
-
 ws.onclose = function () {
-    terminal.onData = () => { };
+    terminal.onData = function() {};
+    window.onresize = function() {};
+    terminal.write("=============== termianl closed. ===============")
 }

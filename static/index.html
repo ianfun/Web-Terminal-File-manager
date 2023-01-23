@@ -1,31 +1,22 @@
 <!DOCTYPE html>
-<html lang="en" xmlns="http://www.w3.org/1999/xhtml">
+<html>
 <head>
-    <meta charset="utf-8" />
+    <meta charset="utf-8"/>
     <title>Terminal</title>
     <meta name="viewport" content="width=device-width, initial-scale=1"/>
     <link rel="stylesheet" href="node_modules/xterm/css/xterm.css" />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Ubuntu+Mono&display=swap" rel="stylesheet">
     <script src="node_modules/xterm/lib/xterm.js"></script>
     <script src="node_modules\xterm-addon-fit\lib\xterm-addon-fit.js"></script>
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inconsolata:wght@500&display=swap');
-        html {
-            height: 100%;
-            width: 100%;
-        }
-        body {
-            height: 100%;
-            width: 100%;
-        }
-        div.terminal {
-            height: 100%;
-            width: 100%;
-        }
+body, div.terminal {height: 100%; width: 100%; }
+html { height: 95%; width: 97%; background-color: black;}
     </style>
-    <script src="index.js" defer></script>
 </head>
-<body style="height: 100%;width: 100%;">
-<div class="terminal">
-</div>
+<body>
+    <div class="terminal"></div>
+    <script src="index.js"></script>
 </body>
 </html>
