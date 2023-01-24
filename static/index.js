@@ -8,6 +8,7 @@ var terminal = new Terminal({
     tabStopWidth: 10
 });
 terminal.open(document.body.firstElementChild);
+terminal.onTitleChange(function(title) { document.title = title; })
 const fitAddon = new FitAddon.FitAddon();
 terminal.loadAddon(fitAddon);
 fitAddon.fit();
@@ -48,4 +49,8 @@ ws.onclose = function () {
     terminal.onData = function() {};
     window.onresize = function() {};
     terminal.write("=============== termianl closed. ===============")
+}
+window.onbeforeunload = function() {
+    if (ws.readyState == WebSocket.OPEN)
+        return "Your terminal is still running, kill anyway?";
 }

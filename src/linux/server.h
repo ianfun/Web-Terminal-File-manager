@@ -15,6 +15,7 @@
 #include <netdb.h>
 #include <dirent.h>
 #include <termios.h>
+#include <pthread.h>
 #include <pty.h>
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -24,6 +25,7 @@
 #include <sys/stat.h>
 #include <sys/syscall.h>
 #include <sys/utsname.h>
+#include <sys/wait.h>
 
 #include "liburing.h"
 #include "llhttp.h"
@@ -40,11 +42,14 @@
 #define MY_INDEX_MINE "text/html; charset=utf-8"
 #define MY_DEFAULT_SHELL "bash"
 #define PTY_READ_SIZE 512
+#define WAIT_CHILD_DELAY_US 1000
 
 static const char *my_shell;
 static struct io_uring my_ring;
 static int my_exitcode;
 static struct termios term_attrs;
+static void *pidset;
+pthread_mutex_t my_mutex = PTHREAD_MUTEX_INITIALIZER;
 struct lazy_buffer {
   size_t length, cap;
   char *data;
@@ -153,12 +158,23 @@ struct linux_dirent64 {
 
 #if MY_DEBUG
 #define my_unreachable __builtin_unreachable
+static void my_error(const char *msg) {
+  if (errno) perror(msg); else fprintf(stderr, "error: %s\n", msg);
+}
+static void my_error2(const char *msg) {
+  fprintf(stderr, "error: %s\n", msg);
+}
 #else
 #define my_unreachable abort
+#define my_error(x)
+#define my_error2(x)
+#define printf(...)
+#define puts(x) 
 #endif
-static void my_error(const char *msg);
-static void my_fatal(const char *msg);
-
+static void my_fatal(const char *msg) {
+  if (errno) perror(msg); else fprintf(stderr, "fatal: %s\n", msg);
+  exit(EXIT_FAILURE);
+}
 #define FILE_ATTRIBUTE_READONLY  0x00000001
 #define FILE_ATTRIBUTE_HIDDEN  0x00000002
 #define FILE_ATTRIBUTE_SYSTEM  0x00000004
@@ -218,3 +234,9 @@ static uint64_t ntohll(uint64_t x) {
   uint64_t L = ntohl(x >> 32);
   return (H << 32) + L;
 }
+static void queue_kill(pid_t pid);
+
+void *pidset_create();
+int pidset_add(void *set, pid_t pid);
+void pidset_remove(void *set, pid_t pid);
+void pidset_destroy(void *set);

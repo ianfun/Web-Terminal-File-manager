@@ -77,12 +77,12 @@ static int http_on_header_field(llhttp_t* parser, const char* at, size_t length)
 }
 static int http_on_header_value(llhttp_t* parser, const char* at, size_t length) {
   struct http_reader *self = (struct http_reader*)parser;
-  if (self->flags & 4) {
+  if ((self->flags & 4) && (length < PATH_MAX)) {
     self->h_newname = malloc(length + 1);
     memcpy(self->h_newname, at, length);
     self->h_newname[length] = '\0';
     self->flags &= ~4;
-  } else if (self->flags & 8) {
+  } else if ((self->flags & 8) && (length < 100)) {
     const char *magic = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
     char *mdata = (char*)malloc((self->ws_len = 36 + length) + 1);
     memcpy(mdata, at, length);
@@ -117,36 +117,116 @@ static void my_accept_start() {
   io_uring_sqe_set_data(sqe, &server);
   io_uring_submit(&my_ring);
 }
-static void my_error(const char *msg) {
-  if (errno) perror(msg); else fprintf(stderr, "error: %s\n", msg);
+static void my_free_ws(struct my_client_ws *ws, pid_t pid) {
+  printf("%s(%p)\n", __func__, ws);
+  if (ws->base.fd) {
+    queue_kill(pid);
+    close(ws->base.fd);
+  }
+  free(ws);
 }
-static void my_error2(const char *msg) {
-  fprintf(stderr, "error: %s\n", msg);
+static int my_is_terminated(pid_t pid) {
+  int status;
+  if (waitpid(pid, &status, WNOHANG) == -1) 
+    return 1;
+  return WIFEXITED(status) || WIFSIGNALED(status);
 }
-static void my_fatal(const char *msg) {
-  if (errno) perror(msg); else fprintf(stderr, "fatal: %s\n", msg);
-  exit(EXIT_FAILURE);
+static void *my_process_killer(void *data) {
+  pid_t pid = (pid_t)(uintptr_t)data;
+  printf("%s(%d)\n", __func__, (int)pid);
+  if (my_is_terminated(pid))
+    goto RET;
+
+  puts("sending SIGHUP\n");
+  if (kill(pid, SIGHUP) == -1)
+    goto RET;
+  usleep(WAIT_CHILD_DELAY_US);
+  if (my_is_terminated(pid))
+    goto RET;
+
+  puts("sending SIGCONT\n");
+  if (kill(pid, SIGCONT) == -1)
+    goto RET;
+  usleep(WAIT_CHILD_DELAY_US);
+  if (my_is_terminated(pid))
+    goto RET;
+
+  puts("sending SIGINT\n");
+  if (kill(pid, SIGINT) == -1)
+    goto RET;
+  usleep(WAIT_CHILD_DELAY_US);
+  if (my_is_terminated(pid))
+    goto RET;
+
+  kill(pid, SIGKILL);
+RET:
+  pthread_mutex_lock(&my_mutex);
+  pidset_remove(pidset, pid);
+  pthread_mutex_unlock(&my_mutex);
+  return NULL;
+}
+static void queue_kill(pid_t pid) {
+  pthread_t th;
+  int res;
+  pthread_mutex_lock(&my_mutex);
+  res = pidset_add(pidset, pid);
+  pthread_mutex_unlock(&my_mutex);
+  if (res) {
+    pthread_create(&th, NULL, my_process_killer, (void*)(uintptr_t)pid);
+    pthread_detach(th);
+  }
 }
 static void my_free_client(struct my_client *self) {
+  struct my_client_http *mc = NULL;
+  struct my_client_ws *ws = NULL;
+  mc = (struct my_client_http*)self;
   printf("%s(%p)\n", __func__, self);
   assert(self->ops_pending == 0);
   if (self->so_type == ss_ws_read_pty || self->so_type == ss_ws_send_data) {
-    struct my_client_ws *ws = (struct my_client_ws*)self;
-    self = (struct my_client*)ws->mc;
-    free(ws);
-  } else {
-    struct my_client_http *mc = (struct my_client_http*)self;
-    if (mc->http_reader.url_str)
-      free(mc->http_reader.url_str);
-    if (mc->pfds[0]) {
-      close(mc->pfds[0]);
-      close(mc->pfds[1]);
+    puts("ss_ws_read_pty | ss_ws_send_data");
+    ws = (struct my_client_ws *)self;
+    mc = (struct my_client_http*)ws->mc;
+    if (!mc->base.ops_pending)
+      goto M_FREE_WS;
+    if (ws->base.fd) {
+      pid_t pid = mc->filesize;
+      queue_kill(pid);
+      close(ws->base.fd);
+      ws->base.fd = 0;
     }
-    if (mc->fileid)
-      close(mc->fileid);
-    if (mc->http_reader.h_newname)
-      free(mc->http_reader.h_newname);
+    return;
   }
+  ws = (struct my_client_ws *)mc->lzb.data;
+  if (ws) {
+    if (mc->filesize) {
+      printf("ws(%d) = %p, mc = %p \n", ws->base.ops_pending, ws, mc);
+      if (ws->base.ops_pending == 0) {
+        M_FREE_WS: ;
+        my_free_ws(ws, mc->filesize);
+      } else {
+        if (ws->base.fd) {
+          pid_t pid = mc->filesize;
+          queue_kill(pid);
+          close(ws->base.fd);
+          ws->base.fd = 0;
+        }
+        return;
+      }
+    } else {
+      lazy_buffer_destroy(&mc->lzb);
+    }
+  }
+  if (mc->http_reader.url_str)
+    free(mc->http_reader.url_str);
+  if (mc->pfds[0]) {
+    close(mc->pfds[0]);
+    close(mc->pfds[1]);
+  }
+  if (mc->fileid)
+    close(mc->fileid);
+  if (mc->http_reader.h_newname)
+    free(mc->http_reader.h_newname);
+
   close(self->fd);
   free(self);
 }
@@ -182,6 +262,7 @@ static void my_recv_header_once(int fd) {
     ev->http_reader.h_newname = NULL;
     ev->pfds[0] = 0;
     ev->fileid = 0;
+    ev->lzb.data = NULL;
 
     sqe = io_uring_get_sqe(&my_ring);
     io_uring_prep_recv(sqe, fd, ev->read_buffer, sizeof(ev->read_buffer), 0);
@@ -383,6 +464,26 @@ static void my_loop() {
       default: 
         my_error("io_uring_wait_cqe()");
       }
+SERVER_SHUTDOWN: 
+      shutdown(server.base.fd, SHUT_RDWR);
+      {
+        struct __kernel_timespec ts;
+        ts.tv_nsec = 0;
+        ts.tv_sec = 1;
+WAIT_AGAIN:
+        if (!io_uring_wait_cqe_timeout(&my_ring, &cqe, &ts)) {
+          io_uring_cqe_seen(&my_ring, cqe);
+          self = (struct my_client*)io_uring_cqe_get_data(cqe);
+          switch (self->so_type) {
+            case ss_server_shutdown:
+            case ss_server_accept:
+              goto WAIT_AGAIN;
+            default:
+              my_free_client(self);
+          }
+          goto WAIT_AGAIN;
+        }
+      }
       return;
     }
     io_uring_cqe_seen(&my_ring, cqe);
@@ -412,7 +513,6 @@ static void my_loop() {
     case ss_reparse:
    {
 RE_PARSE: ;
-        puts("ss_reparse");
         struct my_client_http *mc = (struct my_client_http*)self;
         if (cqe->res <= 0) {
           my_error2("ss_reparse: cqe->res <= 0");
@@ -443,6 +543,7 @@ RE_PARSE: ;
     {
         struct my_client_http *mc = (struct my_client_http*)self;
         lazy_buffer_destroy(&mc->lzb);
+        mc->lzb.data = NULL;
         goto RE_PARSE;
     }
     case ss_ws_read6:
@@ -578,9 +679,11 @@ RE_PARSE: ;
       struct my_client_ws *ws = (struct my_client_ws*)self;
       if (cqe->res <= 0) {
         if (cqe->res == -EIO) {
-          // the child process exited
+          close(ws->base.fd);
+          ws->base.fd = 0;
+        } else {
+          my_error("ss_ws_read_pty: error when reading from child process");
         }
-        my_error("ss_ws_read_pty: error when reading from child process");
         my_delete_client_http(ws->mc);
         break;
       }
@@ -624,6 +727,7 @@ RE_PARSE: ;
     }
     case ss_ws_open:
     {
+      char *q;
       struct winsize win_size = {24, 80, 0, 0};
       struct io_uring_sqe *sqe;
       struct my_client_ws *ws_ptr;
@@ -633,10 +737,13 @@ RE_PARSE: ;
         my_delete_client_http(mc);
         break;
       }
-      char *q = strchr(mc->http_reader.url_str, '?');
+      q = strchr(mc->http_reader.url_str, '?');
 
       if (q++)
         sscanf(q, "rows=%hu&cols=%hu", &win_size.ws_row, &win_size.ws_col);
+
+      free(mc->http_reader.url_str);
+      mc->http_reader.url_str = NULL;
 
       mc->filesize = forkpty(&mc->fileid, NULL, &term_attrs, &win_size);
 
@@ -646,10 +753,15 @@ RE_PARSE: ;
         break;
       }
       if (!mc->filesize) {
+        int res;
         setsid();
+        res = chdir(mc->http_reader.ws_pro);
+        (void)res;
         execlp(my_shell, my_shell, NULL);
         abort();
       }
+      free(mc->http_reader.ws_pro);
+      mc->http_reader.ws_pro = NULL;
       mc->lzb.data = (char*)(ws_ptr = (struct my_client_ws *)malloc(sizeof(struct my_client_ws)));
       ws_ptr->mc = mc;
 
@@ -673,7 +785,6 @@ RE_PARSE: ;
     {
         struct my_client_http *mc = (struct my_client_http*)self;
         if (cqe->res <= 0) {
-          my_error("ss_recv_header: cqe->res <= 0");
           my_delete_client_http(mc);
           break;
         }
@@ -704,8 +815,6 @@ RE_PARSE: ;
 "Sec-WebSocket-Protocol: ", pro, "\r\n"
 "Sec-WebSocket-Accept: ", base64, "\r\n"
 "\r\n");
-                free(pro);
-                mc->http_reader.ws_pro = NULL;
                 my_send_header_once(mc, mc->read_buffer, len, ss_ws_open);
                 break;
             }
@@ -843,7 +952,7 @@ RE_PARSE: ;
         break;
     }
     case ss_server_shutdown:
-      return;
+      goto SERVER_SHUTDOWN;
     default: my_unreachable();
    }
  }
@@ -852,6 +961,9 @@ static void my_cleanup() {
   io_uring_queue_exit(&my_ring);
   close(server.base.fd);
   close(shutdowner.base.fd);
+  if (pidset)
+    pidset_destroy(pidset);
+  pthread_mutex_destroy(&my_mutex);
   printf("[shutdown server] code=%d\n", my_exitcode);
 }
 static void my_signal_handler(int sig) {
@@ -877,13 +989,15 @@ static void init_error(const char *msg) {
 static void my_init(int argc, const char *argv[]) {
   struct sockaddr_in server_addr;
 
+  pthread_mutex_init(&my_mutex, NULL);
   memset(&server_addr, 0, sizeof(server_addr));
-
   server.base.fd = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
   server_addr.sin_family = AF_INET;
   server_addr.sin_port = htons(SERVER_PORT);
   const char *ip4 = "0.0.0.0";
   const char *port = MY_STREXPAND(SERVER_PORT);
+  (void)port;
+  (void)ip4;
   if (argc != 1) {
     if (inet_pton(AF_INET, argv[1], &(server_addr.sin_addr)) <= 0)
       return display_useage("inet_pton()");
@@ -917,6 +1031,7 @@ static void my_init(int argc, const char *argv[]) {
     return init_error("listen()");
   if ((errno = -io_uring_queue_init(QUEUE_INIT, &my_ring, 0)))
     return init_error("io_uring_queue_init()");
+  shutdowner.base.so_type = ss_server_shutdown;
   if ((shutdowner.base.fd = eventfd(0, 0)) == -1)
     return init_error("eventfd()");
   {
@@ -938,7 +1053,7 @@ static void my_init(int argc, const char *argv[]) {
     my_shell = MY_DEFAULT_SHELL;
   if (tcgetattr(STDIN_FILENO, &term_attrs)) 
     my_fatal("tcgetattr()");
-
+  pidset = pidset_create();
   printf("[server start] url=http://%s:%s\n", ip4, port);
 }
 int main(int argc, const char *argv[]) {
