@@ -1,12 +1,35 @@
-const command = 0;
-var terminal = new Terminal({
+var options = {
     fontFamily:  "'Ubuntu Mono', 'Inconsolata', 'Source Code Pro', 'monospace', 'Consolas'",
     cursorBlink: true,
     scrollback: 1000,
     windowsMode: true,
     bellStyle: "sound",
     tabStopWidth: 10
-});
+};
+var gl_fonts = localStorage.getItem("_google-fonts");
+var settings = localStorage.getItem("settings");
+if (gl_fonts) {
+    WebFont.load({
+      google: {
+        families: JSON.parse(gl_fonts)["fonts"]
+      }
+    });
+}
+if (settings) {
+    settings = JSON.parse(settings);
+    settings.theme = localStorage.getItem('theme-' + settings.theme);
+    if (settings.theme)
+        settings.theme = JSON.parse(settings.theme);
+    else
+        settings.theme = {};
+    if (Object.assign)
+        Object.assign(options, settings);
+    else
+        options = {...options, ...settings};
+}
+document.documentElement.style.backgroundColor = settings.theme.background || 'black';
+const command = 0;
+var terminal = new Terminal(options);
 terminal.open(document.body.firstElementChild);
 terminal.onTitleChange(function(title) { document.title = title; })
 const fitAddon = new FitAddon.FitAddon();

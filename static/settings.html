@@ -1,71 +1,410 @@
-﻿<!DOCTYPE html>
-
-<html lang="en" xmlns="http://www.w3.org/1999/xhtml">
+<!DOCTYPE html>
+<html>
 <head>
-    <meta charset="utf-8" />
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Settings</title>
-    <script>
-        const settings_path = "/settings.json";
-        var settings;
-        var settingsstr;
-        var unsave = false;
-        fetch(settings_path).then(res => res.json().then(j => {
-            settings = j;
-            var term_list = document.getElementById("termainl-list-ul");
-            try {
-                for (t of settings.profiles.list) {
-                    var u = document.createElement('li');
-                    u.innerText = t.name;
-                    term_list.appendChild(u);
-                }
-            } catch (e) {
-                console.log(e);
-            }
-            settingsstr = JSON.stringify(settings);
-            document.getElementById("json-edit-textarea").innerText = settingsstr;
-        })).catch(e => alert("cannot fetch settings.json:\n" + e))
-        function save() {
-            settingsstr = document.getElementById("json-edit-textarea").value;
-            var xhr = new XMLHttpRequest();
-            xhr.open("POST", settings_path);
-            xhr.onreadystatechange = function () {
-                if (xhr.readyState === XMLHttpRequest.DONE && xhr.status === 204) {
-                    alert("Saved!");
-                    unsave = false;
-                }
-            }
-            xhr.onerror = function () {
-                alert("failed to save settings\nplease try again later");
-            }
-            //xhr.setRequestHeader("Content-Type", "applicatin/json");
-            xhr.send(settingsstr);
-
-        }
-        window.onbeforeunload = function () {
-            return unsave;
-        }
-        window.onload = function () {
-            document.getElementById("json-edit-textarea").addEventListener("input", function () {
-                unsave = true;
-            })
-        }
-    </script>
+    <script src="node_modules/xterm-theme/index.js"></script>
 </head>
 <body>
-    <h1>Settings</h1>
-    <button style="position: fixed;top: 1em;right: 1em;font-size: 2em;" onclick="save()">Save</button>
-    <div id="terminal-list">
-        <h2>Terminals</h2>
-        <ul id="termainl-list-ul">
-        </ul>
+<style>
+html {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+fieldset {
+    margin: 1rem;
+}
+legend {
+    padding: 4px;
+    border-radius: 4px;
+}
+div.th-item {
+    width: 100%;
+    border-bottom: 1px solid gray;
+    line-height: 2em;
+}
+div.th-item > input {
+    position: absolute;
+    right: 5em;
+    top: inherit;
+    border: 0px;
+}
+div.save-btn-box > button {
+    color: white;
+    background-color: green;
+    transition-duration: 0.4s;
+    text-align: center;
+    cursor: pointer;
+    width: 7em;
+    height: 3em;
+    margin: 1em;
+}
+div.save-btn-box > button:hover {
+    background-color: rgba(0, 128, 0, 0.764);
+}
+div.save-btn-box {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+div.save-btn-box > button:nth-child(1) {
+    background-color: red;
+}
+</style>
+    <h1 style="text-align: center;">Terminal settings</h1>
+    <fieldset>
+        <legend style="background-color: rgb(132, 235, 227);">Font</legend>
+        <label for="font-select">Font family</label>
+        <select id="font-select"></select><br>
+        <input type="button" value="Add Font (must exist in you computer)" onclick="add_font()"><br>
+        <input type="button" value="Add Google Font (dynamic loaded)" onclick="add_google_font()"><br>
+        <input type="button" value="Delete Google Fonts" onclick="delete_google_fonts()"><br>
+        <label for="fontSize">font size</label>
+        <input type="number" id="fontSize" value="12" min="1" max="40"><br>
+        <p id="font-demo" style="text-align: center;">The quick brown fox jumps over the lazy dog.</p>
+        <br>
+        <p>Google Fonts: </p> <pre id="add-font-gl"></pre>
+    </fieldset>
+    <fieldset>
+        <legend style="background-color: rgb(209, 136, 242);">Terminal options</legend>
+        <label for="windowsMode">windows mode</label>
+        <input type="checkbox" id="windowsMode"><br>
+        <label for="cursorBlink">cursor blink</label>
+        <input type="checkbox" id="cursorBlink"><br>
+        <label for="cursorStyle">cursor style</label>
+        <select id="cursorStyle">
+            <option value="block">block</option>
+            <option value="underline">underline</option>
+            <option value="bar">bar</option>
+        </select><br>
+        <label for="cursorWidth">cursor width</label>
+        <input type="number" id="cursorWidth"><br>
+        <label for="FontWeight">font weight</label>
+        <input type="text" id="FontWeight" value="normal" list="font-weight-sug"><br>
+        <datalist id="font-weight-sug">
+            <option value="normal">normal</option>
+            <option value="bold">bold</option>
+            <option value="100">100</option>
+            <option value="200">200</option>
+            <option value="300">300</option>
+            <option value="400">400</option>
+            <option value="500">500</option>
+            <option value="600">600</option>
+            <option value="700">700</option>
+            <option value="800">800</option>
+            <option value="900">900</option>
+        </datalist>
+    </fieldset>
+    <fieldset>
+        <legend style="background-color: rgb(249, 88, 158);">Theme</legend>
+        <label for="theme-select">Name</label>
+        <select id="theme-select"></select>
+        <input type="button" id="new-theme" onclick="new_theme()" value="New Theme">
+        <br>
+        <div id="theme-style">
+        <div class="th-item"><label for="th-background">background</label><input type="color" id="th-background"><br></div>
+        <div class="th-item"><label for="th-black">black</label><input type="color" id="th-black"><br></div>
+        <div class="th-item"><label for="th-blue">blue</label><input type="color" id="th-blue"><br></div>
+        <div class="th-item"><label for="th-brightBlack">brightBlack</label><input type="color" id="th-brightBlack"><br></div>
+        <div class="th-item"><label for="th-brightBlue">brightBlue</label><input type="color" id="th-brightBlue"><br></div>
+        <div class="th-item"><label for="th-brightCyan">brightCyan</label><input type="color" id="th-brightCyan"><br></div>
+        <div class="th-item"><label for="th-brightGreen">brightGreen</label><input type="color" id="th-brightGreen"><br></div>
+        <div class="th-item"><label for="th-brightMagenta">brightMagenta</label><input type="color" id="th-brightMagenta"><br></div>
+        <div class="th-item"><label for="th-brightRed">brightRed</label><input type="color" id="th-brightRed"><br></div>
+        <div class="th-item"><label for="th-brightWhite">brightWhite</label><input type="color" id="th-brightWhite"><br></div>
+        <div class="th-item"><label for="th-brightYellow">brightYellow</label><input type="color" id="th-brightYellow"><br></div>
+        <div class="th-item"><label for="th-cursor">cursor</label><input type="color" id="th-cursor"><br></div>
+        <div class="th-item"><label for="th-cursorAccent">cursorAccent</label><input type="color" id="th-cursorAccent"><br></div>
+        <div class="th-item"><label for="th-cyan">cyan</label><input type="color" id="th-cyan"><br></div>
+        <div class="th-item"><label for="th-extendedAnsi">extendedAnsi</label><input type="color" id="th-extendedAnsi"><br></div>
+        <div class="th-item"><label for="th-foreground">foreground</label><input type="color" id="th-foreground"><br></div>
+        <div class="th-item"><label for="th-green">green</label><input type="color" id="th-green"><br></div>
+        <div class="th-item"><label for="th-magenta">magenta</label><input type="color" id="th-magenta"><br></div>
+        <div class="th-item"><label for="th-red">red</label><input type="color" id="th-red"><br></div>
+        <div class="th-item"><label for="th-selectionBackground">selectionBackground</label><input type="color" id="th-selectionBackground"><br></div>
+        <div class="th-item"><label for="th-selectionForeground">selectionForeground</label><input type="color" id="th-selectionForeground"><br></div>
+        <div class="th-item"><label for="th-selectionInactiveBackground">selectionInactiveBackground</label><input type="color" id="th-selectionInactiveBackground"><br></div>
+        <div class="th-item"><label for="th-white">white</label><input type="color" id="th-white"><br></div>
+        <div class="th-item"><label for="th-yellow">yellow</label><input type="color" id="th-yellow"><br></div>
+        </div>
+    </fieldset>
+    <div class="save-btn-box">
+        <button onclick="delete_theme()">Delete Theme</button>
+        <button onclick="save()" id="save-btn">Save</button>
     </div>
-    <div id="json-edit">
-        <h2>Edit settings.json</h2>
-        <textarea id="json-edit-textarea" rows="20" cols="80" spellcheck="false"></textarea>
-    </div>
-    <div>
-        <h2>View in browser</h2>
-        <a href="/settings.json" target="_blank">view settings.json</a>
-    </div>
+<script>
+var font_select = document.getElementById("font-select");
+var font_demo = document.getElementById("font-demo");
+var windowsMode = document.getElementById("windowsMode");
+var fontSize = document.getElementById("fontSize");
+var cursorBlink = document.getElementById("cursorBlink");
+var cursorStyle = document.getElementById("cursorStyle");
+var FontWeight = document.getElementById("FontWeight");
+var cursorWidth = document.getElementById("cursorWidth");
+var theme_select = document.getElementById("theme-select");
+var theme_style = document.getElementById('theme-style');
+var add_font_gl = document.getElementById('add-font-gl');
+var gl_fonts = new Set();
+window.onload = function() {
+    for (const key of Object.keys(localStorage)) {
+        if (key.startsWith("theme-")) {
+            var s = key.slice(6);
+            if (!xtermTheme[s])
+                xtermTheme[s] = localStorage.getItem(s);
+        } 
+    }
+    for (const theme of Object.keys(xtermTheme)) {
+        var e = document.createElement('option');
+        e.innerText = theme;
+        e.value = theme;
+        theme_select.appendChild(e);
+    }
+    theme_select.addEventListener("change", function() {
+        load_theme(theme_select.value);
+    }, false);
+    if ('queryLocalFonts' in window) {
+        font_select.style.visibility = 'hidden';
+        window.queryLocalFonts().then(
+            function(fonts) {
+                for (const f of fonts) {
+                    var e = document.createElement('option');
+                    e.style.fontFamily = e.value = e.innerText = f.fullName;
+                    font_select.appendChild(e);
+                }
+                load();
+            }
+        )
+        font_select.style.visibility = 'visible';
+    } else {
+        const fontList = ['Arial', 'Arial Black','Bahnschrift','Calibri','Cambria','Cambria Math','Candara','Comic Sans MS','Consolas','Constantia','Corbel','Courier New','Ebrima','Franklin Gothic Medium','Gabriola','Gadugi','Georgia','HoloLens MDL2 Assets','Impact','Ink Free','Javanese Text','Leelawadee UI','Lucida Console','Lucida Sans Unicode','Malgun Gothic','Marlett','Microsoft Himalaya','Microsoft JhengHei','Microsoft New Tai Lue','Microsoft PhagsPa','Microsoft Sans Serif','Microsoft Tai Le','Microsoft YaHei','Microsoft Yi Baiti','MingLiU-ExtB','Mongolian Baiti','MS Gothic','MV Boli','Myanmar Text','Nirmala UI','Palatino Linotype','Segoe MDL2 Assets','Segoe Print','Segoe Script','Segoe UI','Segoe UI Historic','Segoe UI Emoji','Segoe UI Symbol','SimSun','Sitka','Sylfaen','Symbol','Tahoma','Times New Roman','Trebuchet MS','Verdana','Webdings','Wingdings','Yu Gothic'];
+        for (const f of fontList) {
+            var e = document.createElement('option');
+                e.innerText = e.value = e.style.fontFamily = f;
+                font_select.appendChild(e);
+        }
+        load();
+    }
+    font_select.addEventListener("change", function() {
+        font_demo.style.fontFamily = font_select.value;
+    }, false);
+    fontSize.onchange = function() {
+        font_demo.style.fontSize = fontSize.value + 'px';
+    };
+}
+function get_settings() {
+    return {
+        fontFamily: font_select.value,
+        fontSize: Number(fontSize.value),
+        theme: theme_select.value,
+        windowsMode: windowsMode.checked,
+        cursorBlink: cursorBlink.checked,
+        cursorStyle: cursorStyle.value,
+        cursorWidth: Number(cursorWidth.value),
+        fontWeight: FontWeight.value
+    };
+}
+function get_theme() {
+    var theme = {};
+    for (let node of theme_style.childNodes) {
+        var n = node.childNodes[1];
+        if (n)
+            theme[node.firstChild.innerText] = n.value;
+    }
+    return theme;
+}
+function load_theme(theme_str) {
+    var theme = localStorage.getItem("theme-" + theme_str);
+    if (!theme)
+        theme = xtermTheme[theme_str];
+    else
+        theme = JSON.parse(theme);
+    for (let i of Object.entries(theme)) {
+        var obj = document.getElementById('th-' + i[0]);
+        if (obj)
+            obj.value = i[1];
+    }
+}
+function save() {
+    var btn = document.getElementById('save-btn');
+    localStorage.setItem("settings", JSON.stringify(get_settings()));
+    localStorage.setItem("theme-" + theme_select.value,  JSON.stringify(get_theme()));
+    btn.innerText = 'Saved!';
+    setTimeout(function(){ btn.innerText = 'Save'; }, 1000);
+}
+function load() {
+    var it = localStorage.getItem("settings");
+    if (!it) {
+        it = {
+            fontFamily: '',
+            fontSize: 15,
+            theme: '',
+            windowsMode: true,
+            cursorBlink: true,
+            cursorStyle: 'block',
+            cursorWidth: '1',
+            fontWeight: 'normal'
+        };
+    } else 
+        it = JSON.parse(it);
+    if (it.fontFamily.length) {
+        font_select.value = it.fontFamily;
+        if (font_select.selectedIndex == -1) {
+            var o = document.createElement('option');
+            o.value = o.innerText = it.fontFamily;
+            font_select.appendChild(o);
+            font_select.value = it.fontFamily;
+        }
+    }
+    fontSize.value = it.fontSize;
+    if (it.theme.length)
+        theme_select.value = it.theme;
+    if (!theme_select.value.length)
+        theme_select.selectedIndex = 0;
+    windowsMode.checked = it.windowsMode;
+    cursorBlink.checked = it.cursorBlink;
+    cursorStyle.value = it.cursorStyle;
+    cursorWidth.value = it.cursorWidth;
+    FontWeight.value = it.fontWeight;
+    font_demo.style.fontFamily = font_select.value;
+    font_demo.style.fontSize = fontSize.value + 'px';
+    load_theme(theme_select.value);
+    var gfonts = localStorage.getItem('_google-fonts');
+    if (gfonts) {
+        gfonts = JSON.parse(gfonts).fonts;
+    } else {
+        gfonts = [];
+    }
+    for (const it of gfonts)
+        gl_fonts.add(it);
+    sync_google_font();
+};
+function new_theme() {
+    var name = prompt("Name of the new theme");
+    if (!name)
+        return;
+    if (xtermTheme[name]) {
+        alert("The theme " + name + " aleady exists.\nPlease try another name.");
+        return;
+    }
+    localStorage.setItem("theme-" + name,  JSON.stringify(get_theme()));
+    var option = document.createElement('option');
+    option.innerText = option.value = name;
+    theme_select.appendChild(option);
+    theme_select.value = name;
+}
+function delete_theme() {
+    localStorage.removeItem("theme-" + theme_select.value);
+    theme_select.selectedIndex = 0;
+}
+/**
+ * JavaScript code to detect available availability of a
+ * particular font in a browser using JavaScript and CSS.
+ *
+ * Author : Lalit Patel
+ * Website: http://www.lalit.org/lab/javascript-css-font-detect/
+ * License: Apache Software License 2.0
+ *          http://www.apache.org/licenses/LICENSE-2.0
+ * Version: 0.15 (21 Sep 2009)
+ *          Changed comparision font to default from sans-default-default,
+ *          as in FF3.0 font of child element didn't fallback
+ *          to parent element if the font is missing.
+ * Version: 0.2 (04 Mar 2012)
+ *          Comparing font against all the 3 generic font families ie,
+ *          'monospace', 'sans-serif' and 'sans'. If it doesn't match all 3
+ *          then that font is 100% not available in the system
+ * Version: 0.3 (24 Mar 2012)
+ *          Replaced sans with serif in the list of baseFonts
+ */
+
+/**
+ * Usage: d = new Detector();
+ *        d.detect('font name');
+ */
+var Detector = function() {
+    // a font will be compared against all the three default fonts.
+    // and if it doesn't match all 3 then that font is not available.
+    var baseFonts = ['monospace', 'sans-serif', 'serif'];
+
+    //we use m or w because these two characters take up the maximum width.
+    // And we use a LLi so that the same matching fonts can get separated
+    var testString = "mmmmmmmmmmlli";
+
+    //we test using 72px font size, we may use any size. I guess larger the better.
+    var testSize = '72px';
+
+    var h = document.getElementsByTagName("body")[0];
+
+    // create a SPAN in the document to get the width of the text we use to test
+    var s = document.createElement("span");
+    s.style.fontSize = testSize;
+    s.innerHTML = testString;
+    var defaultWidth = {};
+    var defaultHeight = {};
+    for (var index in baseFonts) {
+        //get the default width for the three base fonts
+        s.style.fontFamily = baseFonts[index];
+        h.appendChild(s);
+        defaultWidth[baseFonts[index]] = s.offsetWidth; //width for the default font
+        defaultHeight[baseFonts[index]] = s.offsetHeight; //height for the defualt font
+        h.removeChild(s);
+    }
+
+    function detect(font) {
+        var detected = false;
+        for (var index in baseFonts) {
+            s.style.fontFamily = font + ',' + baseFonts[index]; // name of the font along with the base font for fallback.
+            h.appendChild(s);
+            var matched = (s.offsetWidth != defaultWidth[baseFonts[index]] || s.offsetHeight != defaultHeight[baseFonts[index]]);
+            h.removeChild(s);
+            detected = detected || matched;
+        }
+        return detected;
+    }
+
+    this.detect = detect;
+};
+function add_font() {
+    var name = prompt("Font name");
+    if (!name)
+        return;
+    var o = document.createElement('option');
+    o.value = o.innerText = name;
+    font_select.appendChild(o);
+    font_select.value = name;
+    var d = new Detector();
+    if (!d.detect(name))
+        alert("Warning: font" + name + " not found in your computer!");
+}
+function sync_google_font() {
+    var s = '';
+    var prev = false;
+    var items = [];
+    for (const it of gl_fonts.values()) {
+        if (prev)
+            s += ', ';
+        s += it;
+        prev = true;
+        items.push(it);
+    }
+    add_font_gl.innerText = s;
+    localStorage.setItem("_google-fonts", JSON.stringify({ 'fonts': items }));
+}
+function add_google_font() {
+    var name = prompt("Google Font name(For example, 'Droid Sans')");
+    if (!name)
+        return;
+    gl_fonts.add(name);
+    sync_google_font();
+    var o = document.createElement('option');
+    o.value = o.innerText = name;
+    font_select.appendChild(o);
+    font_select.value = name;
+}
+function delete_google_fonts() {
+    gl_fonts.clear();
+    add_font_gl.innerText = '';
+    localStorage.setItem("_google-fonts", '{"fonts": []}');
+}
+</script>
 </body>
 </html>
