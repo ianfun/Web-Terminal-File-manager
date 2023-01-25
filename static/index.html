@@ -4,20 +4,83 @@
     <meta charset="utf-8"/>
     <title>Terminal</title>
     <meta name="viewport" content="width=device-width, initial-scale=1"/>
-    <link rel="stylesheet" href="node_modules/xterm/css/xterm.css" />
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Ubuntu+Mono&display=swap" rel="stylesheet">
     <script src="node_modules/xterm/lib/xterm.js"></script>
+    <script src="node_modules/xterm-addon-web-links/lib/xterm-addon-web-links.js"></script>
     <script src="node_modules/xterm-addon-fit/lib/xterm-addon-fit.js"></script>
+    <script src="node_modules/xterm-addon-search/lib/xterm-addon-search.js"></script>
+    <script src="node_modules/xterm-addon-webgl/lib/xterm-addon-webgl.js"></script>
     <script src="https://ajax.googleapis.com/ajax/libs/webfont/1.6.26/webfont.js"></script>
+    <link rel="stylesheet" href="node_modules/xterm/css/xterm.css"/>
     <style>
-body, div.terminal {height: 100%; width: 100%; }
-html { height: 95%; width: 97%; }
+#setting-bar {
+    position: fixed;
+    right: 1em;
+    top: 1em;
+    transition: 0.4s;
+    font-size: 2em;
+    padding: 0px;
+    border-radius: 1em;
+    background-color: #8080803d;
+    box-sizing: border-box;
+}
+#setting-bar:hover {
+    cursor: pointer;
+}
+#setting-menu {
+    font-family: sans-serif;
+    text-align: left;
+    padding: 0px;
+    list-style-type: none;
+    position: fixed;
+    right: 4em;
+    top: 2em;
+    font-size: 0.8em;
+    border: black 1px solid;
+    visibility: hidden;
+}
+#setting-menu > li {
+    margin: 5px;
+    padding: 2px;
+    background-color: #008000;
+    color: white;
+}
+#setting-menu > li:hover {
+    cursor: pointer;
+    background-color: white;
+    color: #008000;
+}
+html, body {
+    margin: 0px;
+    height: 100%;
+    width: 100%;
+}
+div.terminal {
+    margin: 0px;
+    padding: 0px;
+    height: 98%;
+}
+div.search-bar {
+    position: relative;
+    top: -1em;
+    left: 10em;
+    visibility: hidden;
+}
     </style>
 </head>
 <body>
     <div class="terminal"></div>
+    <button id="setting-bar">⚙</button>
+    <ul id="setting-menu">
+        <li onclick="show_search_bar()">🔎 Search</li>
+        <li onclick="toggleFullScreen()">Toggle fullscreen</li>
+        <li onclick="open('/settings.html', 'settings', 'popup')">View Settings</li>
+    </ul>
+    <div class="search-bar" id="search-bar">
+        <input type="search" class="search-text" placeholder="Search..." style="width: 30em;">
+        <button onclick="do_search()">Next</button>
+        <button onclick="do_search_p()">Previous</button>
+        <button onclick="close_search()">✖ Close</button>
+    </div>
     <script src="index.js"></script>
 </body>
 </html>

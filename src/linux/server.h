@@ -1,4 +1,6 @@
+#ifndef MY_DEBUG
 #define MY_DEBUG 1
+#endif
 #define _GNU_SOURCE
 // run the program:
 //   gcc server.c
@@ -6,6 +8,7 @@
 #include <errno.h>
 #include <signal.h>
 #include <stdio.h>
+#include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
@@ -156,20 +159,24 @@ struct linux_dirent64 {
     char           d_name[];
 };
 
-#if MY_DEBUG
-#define my_unreachable __builtin_unreachable
+static void my_msg(const char *fmt, ...) {
+  va_list ap;
+  va_start(ap, fmt);
+  vfprintf(stderr, fmt, ap);
+  va_end(ap);
+}
 static void my_error(const char *msg) {
   if (errno) perror(msg); else fprintf(stderr, "error: %s\n", msg);
 }
 static void my_error2(const char *msg) {
   fprintf(stderr, "error: %s\n", msg);
 }
+#if MY_DEBUG
+#define my_unreachable __builtin_unreachable
 #else
 #define my_unreachable abort
-#define my_error(x)
-#define my_error2(x)
-#define printf(...)
-#define puts(x) 
+#define printf(...) (void)0
+#define puts(x) (void)0
 #endif
 static void my_fatal(const char *msg) {
   if (errno) perror(msg); else fprintf(stderr, "fatal: %s\n", msg);

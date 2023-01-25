@@ -179,9 +179,9 @@ static void queue_kill(pid_t pid) {
 static void my_free_client(struct my_client *self) {
   struct my_client_http *mc = NULL;
   struct my_client_ws *ws = NULL;
+  assert(!self->ops_pending);
   mc = (struct my_client_http*)self;
   printf("%s(%p)\n", __func__, self);
-  assert(self->ops_pending == 0);
   if (self->so_type == ss_ws_read_pty || self->so_type == ss_ws_send_data) {
     puts("ss_ws_read_pty | ss_ws_send_data");
     ws = (struct my_client_ws *)self;
@@ -459,31 +459,13 @@ static void my_loop() {
     int num = io_uring_wait_cqe(&my_ring, &cqe);
     if (num < 0) {
       switch ((errno = -num)) {
-      case EINTR: break;
+      case EINTR: 
       case EAGAIN: continue;
       default: 
         my_error("io_uring_wait_cqe()");
       }
 SERVER_SHUTDOWN: 
       shutdown(server.base.fd, SHUT_RDWR);
-      {
-        struct __kernel_timespec ts;
-        ts.tv_nsec = 0;
-        ts.tv_sec = 1;
-WAIT_AGAIN:
-        if (!io_uring_wait_cqe_timeout(&my_ring, &cqe, &ts)) {
-          io_uring_cqe_seen(&my_ring, cqe);
-          self = (struct my_client*)io_uring_cqe_get_data(cqe);
-          switch (self->so_type) {
-            case ss_server_shutdown:
-            case ss_server_accept:
-              goto WAIT_AGAIN;
-            default:
-              my_free_client(self);
-          }
-          goto WAIT_AGAIN;
-        }
-      }
       return;
     }
     io_uring_cqe_seen(&my_ring, cqe);
@@ -501,7 +483,6 @@ WAIT_AGAIN:
       if (res < 0) {
         my_delete_client(self);
         errno = -res;
-        my_error("ss_server_accept");
         break;
       }
       my_recv_header_once(res);
@@ -515,7 +496,6 @@ WAIT_AGAIN:
 RE_PARSE: ;
         struct my_client_http *mc = (struct my_client_http*)self;
         if (cqe->res <= 0) {
-          my_error2("ss_reparse: cqe->res <= 0");
           my_delete_client_http(mc);
           break;
         }
@@ -532,7 +512,6 @@ RE_PARSE: ;
     {
         struct my_client_http *mc = (struct my_client_http*)self;
         if (cqe->res <= 0) {
-          my_error2("ss_readdir: cqe->res <= 0");
           my_delete_client_http(mc);
           break;
         }
@@ -553,7 +532,7 @@ RE_PARSE: ;
         struct io_uring_sqe *sqe;
         struct my_client_http *mc = (struct my_client_http*)self;
         if (cqe->res != 6) {
-          my_error2("ss_ws_read6: expect recv 6 bytes");
+          my_error2("WebSocket: expect recv 6 bytes");
           my_delete_client_http(mc);
           break;
         }
@@ -569,7 +548,7 @@ RE_PARSE: ;
         d1 = data[1];
         len = d1 & 0b01111111;
         if (len == d1) {
-          my_error2("ss_ws_read6: client must mask data");
+          my_error2("WebSocket: client must mask data");
           my_delete_client_http(mc);
           break;
         }
@@ -607,7 +586,7 @@ RE_PARSE: ;
           break;
         }
         if ((len + offset + 6) > sizeof(mc->read_buffer)) {
-          my_error2("ss_ws_read6: buffer to large to recv");
+          my_error2("WebSocket: buffer to large to recv");
           my_delete_client_http(mc);
           break;
         }
@@ -627,7 +606,6 @@ RE_PARSE: ;
         unsigned len;
         struct my_client_http *mc = (struct my_client_http*)self;
         if (cqe->res <= 0) {
-          my_error2("ss_ws_read_data: cqe->res <= 0");
           my_delete_client_http(mc);
           break;
         }
@@ -665,7 +643,7 @@ RE_PARSE: ;
           my_delete_client_http(mc);
           break;
         default: 
-          my_error2("ss_ws_read_data: unsupported opcode");
+          my_error2("WebSocket: unsupported opcode");
           my_delete_client_http(mc);
           break;
         }
@@ -681,8 +659,6 @@ RE_PARSE: ;
         if (cqe->res == -EIO) {
           close(ws->base.fd);
           ws->base.fd = 0;
-        } else {
-          my_error("ss_ws_read_pty: error when reading from child process");
         }
         my_delete_client_http(ws->mc);
         break;
@@ -713,7 +689,6 @@ RE_PARSE: ;
       struct io_uring_sqe *sqe;
       struct my_client_ws *ws = (struct my_client_ws*)self;
       if (cqe->res <= 0) {
-        my_error("ss_ws_send_data: cqe->res <= 0");
         my_delete_client_http(ws->mc);
         break;
       }
@@ -733,7 +708,6 @@ RE_PARSE: ;
       struct my_client_ws *ws_ptr;
       struct my_client_http *mc = (struct my_client_http*)self;
       if (cqe->res <= 0) {
-        my_error("ss_ws_open: cqe->res <= 0");
         my_delete_client_http(mc);
         break;
       }
@@ -748,7 +722,7 @@ RE_PARSE: ;
       mc->filesize = forkpty(&mc->fileid, NULL, &term_attrs, &win_size);
 
       if (mc->filesize < 0) {
-        my_error("forkpty");
+        my_error("forkpty()");
         my_delete_client_http(mc);
         break;
       }
@@ -931,7 +905,6 @@ RE_PARSE: ;
     {
         struct my_client_http *mc = (struct my_client_http*)self;
         if (cqe->res <= 0) {
-          my_error2("ss_responce_file: cqe->res <= 0");
           my_delete_client_http(mc);
           break;
         }
@@ -944,7 +917,6 @@ RE_PARSE: ;
     {
         struct my_client_http *mc = (struct my_client_http*)self;
         if (cqe->res <= 0) {
-          my_error2("ss_responce_file2: cqe->res <= 0");
           my_delete_client_http(mc);
           break;
         }
@@ -964,7 +936,7 @@ static void my_cleanup() {
   if (pidset)
     pidset_destroy(pidset);
   pthread_mutex_destroy(&my_mutex);
-  printf("[shutdown server] code=%d\n", my_exitcode);
+  my_msg("[shutdown server] code=%d\n", my_exitcode);
 }
 static void my_signal_handler(int sig) {
   uint64_t one = 1;
@@ -1054,7 +1026,7 @@ static void my_init(int argc, const char *argv[]) {
   if (tcgetattr(STDIN_FILENO, &term_attrs)) 
     my_fatal("tcgetattr()");
   pidset = pidset_create();
-  printf("[server start] url=http://%s:%s\n", ip4, port);
+  my_msg("[server start] url=http://%s:%s\n", ip4, port);
 }
 int main(int argc, const char *argv[]) {
   my_init(argc, argv);

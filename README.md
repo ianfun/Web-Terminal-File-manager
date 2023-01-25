@@ -6,9 +6,12 @@ Dependency: <https://github.com/nodejs/llhttp>
 
 ## Screenshots
 
-![](screenshots/cmd.png)
-
-![](screenshots/vim.png)
+![](screenshots/filemanager-unicode.png)
+![](screenshots/filemanager-usage.png)
+![](screenshots/fullscreen.png)
+![](screenshots/search-bar.png)
+![](screenshots/settings.png)
+![](screenshots/theme.png)
 
 ## Apps
 
