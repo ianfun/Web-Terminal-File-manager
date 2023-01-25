@@ -17,7 +17,7 @@ Manage your files and terminal in your browser.
 ## Usage
 
 * Terminal: http://localhost/
-* Settings: http://localhost/settings
+* Settings: http://localhost/settings.html
 
 Otherwise, fallback to static files.
 
