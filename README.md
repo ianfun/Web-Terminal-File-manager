@@ -1,35 +1,40 @@
-# Win32-static-file-Server
+# Web-Terminal-File-manager
 
-File Server &amp; Websocket Terminal in C++(Win32 API)
+Manage your files and terminal in your browser.
 
-Dependency: <https://github.com/nodejs/llhttp>
+* Secure warning: Supports HTTP only, HTTPS/WSS is not supported.
+* Supports Windows 10+, Linux (Linux kernel 5+).
 
 ## Screenshots
 
-![](screenshots/filemanager-unicode.png)
-![](screenshots/filemanager-usage.png)
-![](screenshots/fullscreen.png)
-![](screenshots/search-bar.png)
-![](screenshots/settings.png)
-![](screenshots/theme.png)
+![Support Unicode in windows](screenshots/filemanager-unicode.png)
+![Manage files](screenshots/filemanager-usage.png)
+![Toggle fullscreen](screenshots/fullscreen.png)
+![Search bar](screenshots/search-bar.png)
+![Settings](screenshots/settings.png)
+![Customize Theme](screenshots/theme.png)
 
-## Apps
+## Usage
 
-* console app: used for debugging, press Ctrl+C to stop.
-* service app: a windows service, can login to user account or use `nt authority/system` account.
+Terminal: http://localhost/
+Settings: http://localhost/
 
-## Why this is useful
+Otherwise, fallback to static files.
 
-once you install the service app, you can use `sc` to management **httpserver** service.
+## Manage service in windows
+
+In windows, the server can run as a windows service.
+It's name is `httpserver`, you can manage it with `sc` command.
 
 ```bash
-cmd> sc start httpserver
-cmd> sc query httpserver
-cmd> sc stop httpserver
+$ sc start httpserver
+$ sc query httpserver
+$ sc stop httpserver
 ```
 
-by default, it use <http://localhost> for default url, and the directory where it installed is static file path.
+When you install the server installer, you can choose run as system account or login your accout(requires password).The shell will login with that account.This is important for launch Windows Subsystem Linux (WSL)'s shell.
 
-by default, directory listing is enabled, and you can delete file/create file/create folder/delete folder recursively, and launch a terminal in the directory.
+## Install
 
-![](screenshots/useage.png)
+See Release page.
+
